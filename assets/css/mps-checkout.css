@@ -1,0 +1,145 @@
+/* === MPS Gateway - Checkout Card Forms === */
+
+/* Override WC payment_box default styles */
+#payment .payment_box .mps-card-form,
+.woocommerce-checkout .mps-card-form,
+.mps-card-form {
+    background: #ffffff;
+    border: 1px solid #e5e7eb;
+    border-radius: 8px;
+    padding: 20px;
+    margin: 8px 0;
+}
+
+.mps-card-form .mps-field {
+    margin-bottom: 14px;
+}
+
+.mps-card-form .mps-field:last-child {
+    margin-bottom: 0;
+}
+
+.mps-card-form .mps-field label {
+    display: block;
+    font-size: 13px;
+    font-weight: 600;
+    color: #374151;
+    margin-bottom: 5px;
+    letter-spacing: 0.01em;
+}
+
+#payment .payment_box .mps-card-form .mps-field input[type="text"],
+#payment .payment_box .mps-card-form .mps-field input[type="tel"],
+#payment .payment_box .mps-card-form .mps-field input[type="number"],
+.mps-card-form .mps-field input[type="text"],
+.mps-card-form .mps-field input[type="tel"],
+.mps-card-form .mps-field input[type="number"] {
+    width: 100%;
+    padding: 10px 12px;
+    border: 1px solid #d1d5db;
+    border-radius: 6px;
+    font-size: 15px;
+    line-height: 1.4;
+    color: #111827;
+    background: #fff;
+    transition: border-color 0.15s, box-shadow 0.15s;
+    box-sizing: border-box;
+    -webkit-appearance: none;
+    appearance: none;
+}
+
+.mps-card-form .mps-field input:focus {
+    outline: none;
+    border-color: #6366f1;
+    box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.12);
+}
+
+.mps-card-form .mps-field input::placeholder {
+    color: #9ca3af;
+}
+
+.mps-card-form .mps-row {
+    display: flex;
+    gap: 12px;
+    margin-bottom: 14px;
+}
+
+.mps-card-form .mps-row .mps-field {
+    flex: 1;
+    margin-bottom: 0;
+}
+
+/* Billing heading */
+.mps-billing-heading {
+    font-size: 14px;
+    font-weight: 700;
+    color: #374151;
+    margin: 18px 0 12px;
+    padding-top: 16px;
+    border-top: 1px solid #e5e7eb;
+    letter-spacing: -0.01em;
+}
+
+#payment .payment_box .mps-card-form .mps-field select,
+.mps-card-form .mps-field select {
+    width: 100%;
+    padding: 10px 12px;
+    border: 1px solid #d1d5db;
+    border-radius: 6px;
+    font-size: 14px;
+    line-height: 1.4;
+    color: #111827;
+    background: #fff;
+    transition: border-color 0.15s, box-shadow 0.15s;
+    box-sizing: border-box;
+    -webkit-appearance: none;
+    appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath fill='%236b7280' d='M1.41.59l4.59 4.58 4.59-4.58L12 2l-6 6-6-6z'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 12px center;
+    padding-right: 32px;
+}
+
+.mps-card-form .mps-field select:focus {
+    outline: none;
+    border-color: #6366f1;
+    box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.12);
+}
+
+/* Secure badge */
+.mps-secure-badge {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    color: #6b7280;
+    margin-top: 14px;
+    padding-top: 12px;
+    border-top: 1px solid #f3f4f6;
+}
+
+.mps-secure-badge svg {
+    flex-shrink: 0;
+}
+
+/* Card brand notice */
+.mps-mc-notice {
+    color: #b91c1c;
+    font-size: 13px;
+    margin-top: 4px;
+    display: none;
+}
+
+/* Responsive */
+@media (max-width: 480px) {
+    .mps-card-form {
+        padding: 14px;
+    }
+    .mps-card-form .mps-row {
+        flex-direction: column;
+        gap: 14px;
+    }
+    .mps-card-form .mps-field input[type="text"] {
+        font-size: 16px; /* Prevent iOS zoom */
+    }
+}

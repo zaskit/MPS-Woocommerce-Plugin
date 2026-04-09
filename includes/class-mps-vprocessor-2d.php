@@ -31,20 +31,19 @@ class MPS_VProcessor_2D extends MPS_Base_Gateway {
                 'merchantId' => $merchant_id,
             ],
             'transactionDetails' => [
-                'amount'            => (float) $order->get_total(),
-                'currency'          => strtoupper($order->get_currency()),
+                'amount'            => number_format((float) $order->get_total(), 2, '.', ''),
+                'currency'          => $order->get_currency(),
                 'externalReference' => $ext_ref,
-                'custom1'           => 'MPS-WooCommerce',
             ],
             'cardDetails' => [
                 'cardHolderName'  => $card['name'],
                 'cardNumber'      => $card['number'],
                 'cvv'             => $card['cvv'],
-                'expirationMonth' => (int) $card['exp_month'],
+                'expirationMonth' => sprintf('%02d', $card['exp_month']),
                 'expirationYear'  => (int) $card['exp_year'],
             ],
             'payerDetails' => [
-                'username'  => $order->get_billing_email(),
+                'username'  => sanitize_user($order->get_billing_email(), true),
                 'firstName' => $order->get_billing_first_name(),
                 'lastName'  => $order->get_billing_last_name(),
                 'email'     => $order->get_billing_email(),
@@ -87,6 +86,8 @@ class MPS_VProcessor_2D extends MPS_Base_Gateway {
         $card_brand    = $result['cardBrand'] ?? $this->detect_card_brand($card['number']);
         $last_four     = $result['lastFour'] ?? substr($card['number'], -4);
 
+        $descriptor = $this->portal_descriptor ?: ($result['descriptor'] ?? '');
+
         // Store order meta
         $this->store_order_meta($order, [
             '_mps_vp2d_transaction_id' => $transaction_id,
@@ -94,6 +95,7 @@ class MPS_VProcessor_2D extends MPS_Base_Gateway {
             '_mps_processor_tx_id'     => $transaction_id,
             '_mps_card_brand'          => strtolower($card_brand),
             '_mps_last_four'           => $last_four,
+            '_mps_descriptor'          => $descriptor,
         ]);
 
         if ($status === 'approved') {

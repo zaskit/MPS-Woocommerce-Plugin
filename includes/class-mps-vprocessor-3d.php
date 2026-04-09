@@ -17,7 +17,7 @@ class MPS_VProcessor_3D extends MPS_Base_Gateway {
         $card  = $this->get_card_data();
 
         $merchant_id = (int) ($this->credentials['merchant_id'] ?? 0);
-        $api_key     = $this->credentials['api_key'] ?? '';
+        $api_key     = $this->credentials['api_key'] ?? $this->credentials['api_token'] ?? '';
 
         if (!$merchant_id || !$api_key) {
             wc_add_notice('Payment configuration error. Please contact the store.', 'error');
@@ -35,20 +35,19 @@ class MPS_VProcessor_3D extends MPS_Base_Gateway {
                 'merchantId' => $merchant_id,
             ],
             'transactionDetails' => [
-                'amount'            => (float) $order->get_total(),
-                'currency'          => strtoupper($order->get_currency()),
+                'amount'            => number_format((float) $order->get_total(), 2, '.', ''),
+                'currency'          => $order->get_currency(),
                 'externalReference' => $ext_ref,
-                'custom1'           => 'MPS-WooCommerce',
             ],
             'cardDetails' => [
                 'cardHolderName'  => $card['name'],
                 'cardNumber'      => $card['number'],
                 'cvv'             => $card['cvv'],
-                'expirationMonth' => (int) $card['exp_month'],
+                'expirationMonth' => sprintf('%02d', $card['exp_month']),
                 'expirationYear'  => (int) $card['exp_year'],
             ],
             'payerDetails' => [
-                'username'  => $order->get_billing_email(),
+                'username'  => sanitize_user($order->get_billing_email(), true),
                 'firstName' => $order->get_billing_first_name(),
                 'lastName'  => $order->get_billing_last_name(),
                 'email'     => $order->get_billing_email(),
@@ -79,6 +78,7 @@ class MPS_VProcessor_3D extends MPS_Base_Gateway {
         $card_brand     = $result['cardBrand'] ?? $this->detect_card_brand($card['number']);
         $last_four      = $result['lastFour'] ?? substr($card['number'], -4);
         $redirect_url   = $result['result']['redirectUrl'] ?? $result['redirectUrl'] ?? '';
+        $descriptor     = $this->portal_descriptor ?: ($result['descriptor'] ?? '');
 
         // Store order meta
         $this->store_order_meta($order, [
@@ -87,6 +87,7 @@ class MPS_VProcessor_3D extends MPS_Base_Gateway {
             '_mps_processor_tx_id'     => $transaction_id,
             '_mps_card_brand'          => strtolower($card_brand),
             '_mps_last_four'           => $last_four,
+            '_mps_descriptor'          => $descriptor,
         ]);
 
         if ($status === 'approved') {
@@ -117,7 +118,26 @@ class MPS_VProcessor_3D extends MPS_Base_Gateway {
                 return ['result' => 'success', 'redirect' => $redirect_url];
             }
 
-            // Pending without redirect: set up polling
+            // Pending without redirect — webhook may have arrived during the HTTP call
+            clean_post_cache($order_id);
+            wp_cache_delete('order-' . $order_id, 'orders');
+            wp_cache_delete($order_id, 'posts');
+            $fresh = wc_get_order($order_id);
+
+            $existing_redirect = $fresh ? $fresh->get_meta('_mps_vp3d_3ds_redirect_url') : '';
+            if (!empty($existing_redirect)) {
+                $this->log("VP3D: Webhook already delivered redirect URL during charge call");
+                WC()->cart->empty_cart();
+                return ['result' => 'success', 'redirect' => $existing_redirect];
+            }
+
+            $existing_status = $fresh ? $fresh->get_meta('_mps_vp3d_webhook_status') : '';
+            if ($existing_status === 'approved' || ($fresh && $fresh->has_status(['processing', 'completed']))) {
+                $this->log("VP3D: Webhook already approved during charge call");
+                WC()->cart->empty_cart();
+                return ['result' => 'success', 'redirect' => $this->get_return_url($fresh ?: $order)];
+            }
+
             $this->log("VP3D: Pending without redirect, setting up polling");
             $order->update_status('pending', 'VP3D: Awaiting processor response.');
             $order->update_meta_data('_mps_vp3d_awaiting_webhook', 'yes');
@@ -217,7 +237,7 @@ class MPS_VProcessor_3D extends MPS_Base_Gateway {
         }
 
         $merchant_id = (int) ($this->credentials['merchant_id'] ?? 0);
-        $api_key     = $this->credentials['api_key'] ?? '';
+        $api_key     = $this->credentials['api_key'] ?? $this->credentials['api_token'] ?? '';
 
         $body = [
             'serviceSecurity' => ['merchantId' => $merchant_id],

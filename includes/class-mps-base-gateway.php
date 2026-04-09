@@ -4,15 +4,16 @@ defined('ABSPATH') || exit;
 abstract class MPS_Base_Gateway extends WC_Payment_Gateway {
 
     protected int    $portal_gateway_id;
-    protected array  $credentials;
+    public    array  $credentials;
     protected string $processor_code;
     protected string $processor_type;
     protected string $environment;
     protected array  $supported_cards;
     public    bool   $supports_3ds;
-    protected string $fee_label;
-    protected float  $fee_percentage;
+    public    string $fee_label;
+    public    float  $fee_percentage;
     protected array  $allowed_cards;
+    public    string $portal_descriptor;
 
     public function __construct(array $gateway_config) {
         $this->portal_gateway_id = (int) ($gateway_config['id'] ?? 0);
@@ -23,8 +24,9 @@ abstract class MPS_Base_Gateway extends WC_Payment_Gateway {
         $this->supported_cards   = $gateway_config['supported_cards'] ?? [];
         $this->supports_3ds      = (bool) ($gateway_config['supports_3ds'] ?? false);
         $this->fee_percentage    = (float) ($gateway_config['fee_percentage'] ?? 0);
-        $this->fee_label         = $gateway_config['fee_label'] ?? 'Processing Fee';
+        $this->fee_label         = $gateway_config['fee_label'] ?? 'Handling Fee';
         $this->allowed_cards     = $gateway_config['allowed_cards'] ?? $this->supported_cards;
+        $this->portal_descriptor = $gateway_config['descriptor'] ?? '';
 
         // Gateway ID: mps_{code}_{type}_{portal_id}
         $this->id = 'mps_' . $this->processor_code . '_' . $this->processor_type . '_' . $this->portal_gateway_id;
@@ -43,13 +45,11 @@ abstract class MPS_Base_Gateway extends WC_Payment_Gateway {
         $this->enabled     = $global_enabled ? 'yes' : 'no';
         $this->title       = !empty($main_settings['title_' . $this->id]) ? $main_settings['title_' . $this->id] : $default_title;
         $this->description = !empty($main_settings['desc_' . $this->id]) ? $main_settings['desc_' . $this->id] : $default_desc;
-        $this->method_title       = 'MPS: ' . $default_title;
-        $this->method_description = sprintf(
-            '%s (%s) — %s',
-            $default_title,
-            implode(', ', array_map('ucfirst', $this->supported_cards)),
-            ucfirst($this->environment)
-        );
+        // Leave method_title and method_description empty so WC treats these as "shell" gateways.
+        // WC hides shells from the admin Payments list when a non-shell gateway (MPS_Settings_Gateway)
+        // exists from the same plugin. The individual processors still appear at checkout.
+        $this->method_title       = '';
+        $this->method_description = '';
 
         // Default icon
         $this->icon = $this->get_card_icons_url();

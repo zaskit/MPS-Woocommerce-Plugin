@@ -1,20 +1,36 @@
 <?php
 defined('ABSPATH') || exit;
 
-class MPS_EProcessor_2D extends MPS_Base_Gateway {
+class MPS_EProcessor_Hosted extends MPS_Base_Gateway {
 
     public function __construct(array $gateway_config) {
         parent::__construct($gateway_config);
+        $this->has_fields = false; // No card fields — customer enters card on processor page
         $this->supports[] = 'refunds';
 
-        // AJAX polling
-        add_action('wp_ajax_mps_ep2d_poll_status', [$this, 'ajax_poll_status']);
-        add_action('wp_ajax_nopriv_mps_ep2d_poll_status', [$this, 'ajax_poll_status']);
+        // AJAX polling for pending hosted transactions
+        add_action('wp_ajax_mps_ep_hosted_poll_status', [$this, 'ajax_poll_status']);
+        add_action('wp_ajax_nopriv_mps_ep_hosted_poll_status', [$this, 'ajax_poll_status']);
+    }
+
+    /**
+     * Show description only (no card form).
+     */
+    public function payment_fields(): void {
+        if ($this->description) {
+            echo '<div class="mps-hosted-notice" style="padding:12px 0;">' . wpautop(wp_kses_post($this->description)) . '</div>';
+        }
+    }
+
+    /**
+     * No card fields to validate.
+     */
+    public function validate_fields(): bool {
+        return true;
     }
 
     public function process_payment($order_id): array {
         $order = wc_get_order($order_id);
-        $card  = $this->get_card_data();
 
         $account_id  = $this->credentials['account_id'] ?? '';
         $password    = $this->credentials['account_password'] ?? '';
@@ -41,8 +57,8 @@ class MPS_EProcessor_2D extends MPS_Base_Gateway {
         $state = strtoupper(substr($order->get_billing_state() ?: 'NA', 0, 2));
         if (strlen($state) < 2) $state = 'NA';
 
-        // SHA with card
-        $sha = MPS_EProcessor_API::sha_with_card($passphrase, $amount, $account_id, $email, $card['number'], $ip);
+        // SHA WITHOUT card number (hosted flow)
+        $sha = MPS_EProcessor_API::sha_without_card($passphrase, $amount, $account_id, $email, $ip);
 
         // Build product description
         $items = [];
@@ -51,12 +67,9 @@ class MPS_EProcessor_2D extends MPS_Base_Gateway {
         }
         $product_name = implode(', ', $items) ?: 'Order #' . $order->get_order_number();
 
-        // Callback and return URLs (on merchant site)
+        // Callback and return URLs
         $callback_url = home_url('mps-eupaymentz-callback');
         $return_url   = home_url('mps-eupaymentz-return') . '?order_id=' . $order_id;
-
-        $exp_year = $card['exp_year'];
-        if (strlen($exp_year) === 2) $exp_year = '20' . $exp_year;
 
         $data = [
             'account_id'                => $account_id,
@@ -83,15 +96,10 @@ class MPS_EProcessor_2D extends MPS_Base_Gateway {
             'merchant_data1'            => (string) $order_id,
             'merchant_data2'            => substr($order->get_order_key(), 0, 20),
             'option'                    => '',
-            'transac_cc_number'         => $card['number'],
-            'transac_cc_month'          => str_pad($card['exp_month'], 2, '0', STR_PAD_LEFT),
-            'transac_cc_year'           => $exp_year,
-            'transac_cc_cvc'            => $card['cvv'],
         ];
 
-        $this->log("=== EP2D PAYMENT START === Order #{$order_id}");
+        $this->log("=== EP Hosted PAYMENT START === Order #{$order_id}");
         $this->log("Amount: {$amount} {$data['transac_currency_code']}");
-        $this->log("Card: ****" . substr($card['number'], -4));
 
         $response = MPS_EProcessor_API::post(MPS_EProcessor_API::PROCESS_URL, $data);
 
@@ -110,35 +118,28 @@ class MPS_EProcessor_2D extends MPS_Base_Gateway {
             return ['result' => 'fail'];
         }
 
-        $card_brand = $this->detect_card_brand($card['number']);
-        $last_four  = substr($card['number'], -4);
+        $this->store_order_meta($order);
 
-        $this->store_order_meta($order, [
-            '_mps_card_brand' => $card_brand,
-            '_mps_last_four'  => $last_four,
-        ]);
-
-        // Check for 3DS redirect (shouldn't happen for 2D but handle gracefully)
+        // Hosted should always redirect to processor payment page
         if (isset($result['isDirectResult']) && $result['isDirectResult'] === false) {
             $redirect_url = MPS_EProcessor_API::build_redirect_url($result);
             if ($redirect_url) {
-                $this->log("EP2D: Redirect required → {$redirect_url}");
-                $order->update_status('pending', 'EP2D: Redirecting for additional verification.');
+                $this->log("EP Hosted: Redirecting to payment page → {$redirect_url}");
+                $order->update_status('pending', 'EP Hosted: Redirecting to hosted payment page.');
                 $order->update_meta_data('_mps_ep_transaction_id', $result['resp_trans_id'] ?? '');
                 $order->update_meta_data('_mps_processor_tx_id', $result['resp_trans_id'] ?? '');
-                $order->update_meta_data('_mps_ep2d_awaiting_callback', 'yes');
-                $order->update_meta_data('_mps_ep2d_callback_status', 'waiting');
+                $order->update_meta_data('_mps_ep_hosted_awaiting_callback', 'yes');
+                $order->update_meta_data('_mps_ep_hosted_callback_status', 'waiting');
                 $order->save();
                 WC()->cart->empty_cart();
                 return ['result' => 'success', 'redirect' => $redirect_url];
             }
         }
 
-        // Direct result
+        // Fallback: direct result (unlikely for hosted)
         if (isset($result['resp_trans_status'])) {
-            // Verify SHA
             if (!MPS_EProcessor_API::verify_response_sha($passphrase, $result)) {
-                $this->log("EP2D: SHA verification failed!");
+                $this->log("EP Hosted: SHA verification failed!");
                 wc_add_notice('Payment verification failed. Please try again.', 'error');
                 return ['result' => 'fail'];
             }
@@ -156,40 +157,39 @@ class MPS_EProcessor_2D extends MPS_Base_Gateway {
             $order->save();
 
             if ($parsed['is_success']) {
-                $this->log("=== EP2D PAYMENT SUCCESS === TX: {$tx_id}");
+                $this->log("=== EP Hosted PAYMENT SUCCESS === TX: {$tx_id}");
                 $order->payment_complete($tx_id);
-                $order->add_order_note(sprintf('EP2D Payment approved. TX: %s', $tx_id));
+                $order->add_order_note(sprintf('EP Hosted Payment approved. TX: %s', $tx_id));
                 WC()->cart->empty_cart();
 
                 $this->report_to_portal($order, 'approved', [
                     'processor_tx_id' => $tx_id,
-                    'card_brand' => $card_brand,
-                    'last_four' => $last_four,
+                    'is_3ds' => true,
                 ]);
 
                 return ['result' => 'success', 'redirect' => $this->get_return_url($order)];
             }
 
             if ($parsed['is_pending']) {
-                $this->log("EP2D: Payment pending, awaiting callback");
-                $order->update_status('on-hold', 'EP2D: Payment pending. Awaiting confirmation.');
-                $order->update_meta_data('_mps_ep2d_awaiting_callback', 'yes');
-                $order->update_meta_data('_mps_ep2d_callback_status', 'waiting');
+                $this->log("EP Hosted: Payment pending, awaiting callback");
+                $order->update_status('on-hold', 'EP Hosted: Payment pending. Awaiting confirmation.');
+                $order->update_meta_data('_mps_ep_hosted_awaiting_callback', 'yes');
+                $order->update_meta_data('_mps_ep_hosted_callback_status', 'waiting');
                 $order->save();
                 WC()->cart->empty_cart();
 
                 $polling_url = add_query_arg([
-                    'mps_ep2d_poll' => '1',
-                    'order_id'      => $order_id,
-                    'key'           => $order->get_order_key(),
+                    'mps_ep_hosted_poll' => '1',
+                    'order_id'           => $order_id,
+                    'key'                => $order->get_order_key(),
                 ], $this->get_return_url($order));
 
                 return ['result' => 'success', 'redirect' => $polling_url];
             }
 
             // Failed
-            $this->log("=== EP2D PAYMENT FAILED === Status: {$parsed['status']} — {$parsed['description']}");
-            $order->update_status('failed', sprintf('EP2D declined: [%s] %s', $parsed['status'], $parsed['description']));
+            $this->log("=== EP Hosted PAYMENT FAILED === Status: {$parsed['status']} — {$parsed['description']}");
+            $order->update_status('failed', sprintf('EP Hosted declined: [%s] %s', $parsed['status'], $parsed['description']));
 
             $this->report_to_portal($order, 'declined', [
                 'processor_tx_id' => $tx_id,
@@ -201,9 +201,8 @@ class MPS_EProcessor_2D extends MPS_Base_Gateway {
             return ['result' => 'fail'];
         }
 
-        // Unexpected response
-        $this->log("EP2D: Unexpected response format");
-        wc_add_notice('Payment could not be processed. Please try again.', 'error');
+        $this->log("EP Hosted: Unexpected response — no redirect URL and no direct result");
+        wc_add_notice('Unable to process hosted payment. Please try again.', 'error');
         return ['result' => 'fail'];
     }
 
@@ -215,34 +214,29 @@ class MPS_EProcessor_2D extends MPS_Base_Gateway {
         $order    = $order_id ? wc_get_order($order_id) : null;
 
         if (!$order) {
-            MPS_Logger::error("EP2D Callback: Order not found for ID: {$order_id}", 'mps-ep2d');
+            MPS_Logger::error("EP Hosted Callback: Order not found for ID: {$order_id}", 'mps-ehosted');
             return;
         }
 
-        // Verify order key
         $expected_key = substr($order->get_order_key(), 0, 20);
         $received_key = substr($data['resp_merchant_data2'] ?? '', 0, 20);
         if ($expected_key !== $received_key) {
-            MPS_Logger::error("EP2D Callback: Order key mismatch for #{$order_id}", 'mps-ep2d');
+            MPS_Logger::error("EP Hosted Callback: Order key mismatch for #{$order_id}", 'mps-ehosted');
             return;
         }
 
-        // Skip if already completed
         if ($order->has_status(['processing', 'completed'])) return;
 
-        // Get passphrase from gateway credentials
         $passphrase = $this->credentials['account_passphrase'] ?? '';
 
-        // Verify SHA
         if (!MPS_EProcessor_API::verify_response_sha($passphrase, $data)) {
-            MPS_Logger::error("EP2D Callback: SHA verification failed for #{$order_id}", 'mps-ep2d');
+            MPS_Logger::error("EP Hosted Callback: SHA verification failed for #{$order_id}", 'mps-ehosted');
             return;
         }
 
         $parsed = MPS_EProcessor_API::parse_transaction_status($data);
 
         if ($parsed['is_success']) {
-            // Race condition: re-fetch order
             clean_post_cache($order_id);
             wp_cache_delete('order-' . $order_id, 'orders');
             wp_cache_delete($order_id, 'posts');
@@ -250,26 +244,35 @@ class MPS_EProcessor_2D extends MPS_Base_Gateway {
             if ($fresh && $fresh->has_status(['processing', 'completed'])) return;
 
             $order->payment_complete($parsed['transaction_id']);
-            $order->add_order_note('EP2D Callback: approved. TX: ' . $parsed['transaction_id']);
-            $order->update_meta_data('_mps_ep2d_callback_status', 'approved');
+            $order->add_order_note('EP Hosted Callback: approved. TX: ' . $parsed['transaction_id']);
+            $order->update_meta_data('_mps_ep_hosted_callback_status', 'approved');
             $descriptor = $this->portal_descriptor ?: ($data['resp_descriptor'] ?? '');
             if ($descriptor) {
                 $order->update_meta_data('_mps_descriptor', $descriptor);
             }
+
+            // Try to get card brand from response
+            $card_brand = $data['resp_card_brand'] ?? $data['resp_cc_type'] ?? '';
+            $last_four  = $data['resp_cc_last4'] ?? '';
+            if ($card_brand) $order->update_meta_data('_mps_card_brand', strtolower($card_brand));
+            if ($last_four) $order->update_meta_data('_mps_last_four', $last_four);
+
             $order->save();
 
             MPS_Transaction_Reporter::report($order, [
                 'status' => 'approved',
                 'processor_tx_id' => $parsed['transaction_id'],
-                'is_3ds' => false,
+                'is_3ds' => true,
+                'card_brand' => $card_brand,
+                'last_four' => $last_four,
             ]);
         } elseif ($parsed['is_pending']) {
-            $order->update_status('on-hold', 'EP2D Callback: pending.');
-            $order->update_meta_data('_mps_ep2d_callback_status', 'waiting');
+            $order->update_status('on-hold', 'EP Hosted Callback: pending.');
+            $order->update_meta_data('_mps_ep_hosted_callback_status', 'waiting');
             $order->save();
         } else {
-            $order->update_status('failed', 'EP2D Callback: ' . $parsed['description']);
-            $order->update_meta_data('_mps_ep2d_callback_status', 'declined');
+            $order->update_status('failed', 'EP Hosted Callback: ' . $parsed['description']);
+            $order->update_meta_data('_mps_ep_hosted_callback_status', 'declined');
             $order->save();
 
             MPS_Transaction_Reporter::report($order, [
@@ -277,13 +280,13 @@ class MPS_EProcessor_2D extends MPS_Base_Gateway {
                 'processor_tx_id' => $parsed['transaction_id'] ?? '',
                 'status_code' => $parsed['status'] ?? '',
                 'status_message' => $parsed['description'] ?? '',
-                'is_3ds' => false,
+                'is_3ds' => true,
             ]);
         }
     }
 
     /**
-     * Handle EuPaymentz return (customer redirected back).
+     * Handle EuPaymentz return (customer redirected back after hosted payment).
      */
     public function process_return(array $data): void {
         $order_id = (int) ($data['order_id'] ?? 0);
@@ -294,20 +297,18 @@ class MPS_EProcessor_2D extends MPS_Base_Gateway {
             exit;
         }
 
-        // Already completed
         if ($order->has_status(['processing', 'completed'])) {
             wp_redirect($this->get_return_url($order));
             exit;
         }
 
-        // Process response data if present
         if (isset($data['resp_trans_status']) && !$order->has_status(['processing', 'completed'])) {
             $passphrase = $this->credentials['account_passphrase'] ?? '';
             if (MPS_EProcessor_API::verify_response_sha($passphrase, $data)) {
                 $parsed = MPS_EProcessor_API::parse_transaction_status($data);
                 if ($parsed['is_success']) {
                     $order->payment_complete($parsed['transaction_id']);
-                    $order->add_order_note('EP2D Return: approved. TX: ' . $parsed['transaction_id']);
+                    $order->add_order_note('EP Hosted Return: approved. TX: ' . $parsed['transaction_id']);
                     $descriptor = $this->portal_descriptor ?: ($data['resp_descriptor'] ?? '');
                     if ($descriptor) {
                         $order->update_meta_data('_mps_descriptor', $descriptor);
@@ -316,24 +317,23 @@ class MPS_EProcessor_2D extends MPS_Base_Gateway {
                     MPS_Transaction_Reporter::report($order, [
                         'status' => 'approved',
                         'processor_tx_id' => $parsed['transaction_id'],
-                        'is_3ds' => false,
+                        'is_3ds' => true,
                     ]);
                 } elseif ($parsed['is_pending']) {
-                    $order->update_status('on-hold', 'EP2D: Pending confirmation.');
+                    $order->update_status('on-hold', 'EP Hosted: Pending confirmation.');
                 } else {
-                    $order->update_status('failed', 'EP2D Return: ' . $parsed['description']);
+                    $order->update_status('failed', 'EP Hosted Return: ' . $parsed['description']);
                     MPS_Transaction_Reporter::report($order, [
                         'status' => 'declined',
                         'processor_tx_id' => $parsed['transaction_id'] ?? '',
                         'status_code' => $parsed['status'] ?? '',
                         'status_message' => $parsed['description'] ?? '',
-                        'is_3ds' => false,
+                        'is_3ds' => true,
                     ]);
                 }
             }
         }
 
-        // Redirect based on final status
         if ($order->has_status(['processing', 'completed', 'on-hold'])) {
             wp_redirect($this->get_return_url($order));
         } else {
@@ -344,7 +344,7 @@ class MPS_EProcessor_2D extends MPS_Base_Gateway {
     }
 
     /**
-     * AJAX polling for pending EP2D transactions.
+     * AJAX polling for pending EP Hosted transactions.
      */
     public function ajax_poll_status(): void {
         $order_id = (int) ($_GET['order_id'] ?? 0);
@@ -361,7 +361,7 @@ class MPS_EProcessor_2D extends MPS_Base_Gateway {
         wp_cache_delete('order-' . $order_id, 'orders');
         $order = wc_get_order($order_id);
 
-        $callback_status = $order->get_meta('_mps_ep2d_callback_status');
+        $callback_status = $order->get_meta('_mps_ep_hosted_callback_status');
 
         if ($callback_status === 'approved' || $order->has_status(['processing', 'completed'])) {
             wp_send_json_success(['status' => 'approved', 'redirect_url' => $this->get_return_url($order)]);
@@ -404,7 +404,7 @@ class MPS_EProcessor_2D extends MPS_Base_Gateway {
 
         $result = MPS_EProcessor_API::parse_response($response);
         if ($result && ($result['resp_trans_status'] ?? '') === '00000') {
-            $order->add_order_note(sprintf('EP2D Refund approved: %s %s', $amount, $order->get_currency()));
+            $order->add_order_note(sprintf('EP Hosted Refund approved: %s %s', $amount, $order->get_currency()));
             return true;
         }
 

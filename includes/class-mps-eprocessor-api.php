@@ -14,6 +14,13 @@ class MPS_EProcessor_API {
     }
 
     /**
+     * Generate SHA256 for hosted payment request (no card).
+     */
+    public static function sha_without_card(string $passphrase, string $amount, string $account_id, string $email, string $ip): string {
+        return hash('sha256', $passphrase . $amount . $account_id . $email . $ip);
+    }
+
+    /**
      * Generate SHA256 for refund.
      */
     public static function sha_refund(string $passphrase, string $account_id, string $transaction_id): string {

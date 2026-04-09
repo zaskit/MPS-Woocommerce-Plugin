@@ -12,10 +12,10 @@ class MPS_Gateway_Factory {
         'v_2d' => 'MPS_VProcessor_2D',
         'v_3d' => 'MPS_VProcessor_3D',
         'e_2d' => 'MPS_EProcessor_2D',
-        // Future:
-        // 'e_3d' => 'MPS_EProcessor_3D',
-        // 'e_hosted' => 'MPS_EProcessor_Hosted',
-        // 'k_2d' => 'MPS_KProcessor',
+        'e_3d' => 'MPS_EProcessor_3D',
+        'e_hosted' => 'MPS_EProcessor_Hosted',
+        'k_2d' => 'MPS_KProcessor',
+        'k_3d' => 'MPS_KProcessor',
     ];
 
     /**

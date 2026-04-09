@@ -37,7 +37,7 @@ class MPS_VProcessor_3D_Webhook {
             return;
         }
 
-        $api_key  = $gateway->credentials['api_key'] ?? '';
+        $api_key  = $gateway->credentials['api_key'] ?? $gateway->credentials['api_token'] ?? '';
         $expected = hash('sha256', $api_key . $raw_post . $api_key);
         $received = $_SERVER['HTTP_SIGNATURE'] ?? '';
 
@@ -64,23 +64,46 @@ class MPS_VProcessor_3D_Webhook {
      * Registered on: woocommerce_api_mps_vsafe_3ds_return
      */
     public static function handle_3ds_return(): void {
-        MPS_Logger::debug('VP3D 3DS Return received', 'mps-vp3d-webhook');
+        MPS_Logger::info('VP3D 3DS Return received — GET: ' . wp_json_encode($_GET), 'mps-vp3d-webhook');
 
-        // Try to resolve order
-        $order_id = (int) ($_GET['order_id'] ?? 0);
+        $order_id       = (int) ($_GET['order_id'] ?? 0);
+        $threed_result  = null;
 
-        // Also try externalReference
+        // Try externalReference
         if (!$order_id && !empty($_GET['externalReference'])) {
             $order_id = (int) explode('-', $_GET['externalReference'])[0];
+        }
+
+        // vSafe sends base64-encoded 'result' param after 3DS challenge
+        if (!empty($_GET['result'])) {
+            $threed_result = json_decode(base64_decode($_GET['result']), true);
+            MPS_Logger::info('VP3D 3DS result decoded: ' . wp_json_encode($threed_result), 'mps-vp3d-webhook');
+
+            // Resolve order by transaction reference if not yet found
+            if (!$order_id && !empty($threed_result['reference'])) {
+                $tx_ref = sanitize_text_field($threed_result['reference']);
+                $orders = wc_get_orders([
+                    'limit'      => 1,
+                    'meta_key'   => '_mps_vp3d_transaction_id',
+                    'meta_value' => $tx_ref,
+                ]);
+                if (!empty($orders)) {
+                    $order_id = $orders[0]->get_id();
+                    MPS_Logger::info("VP3D 3DS Return: Order #{$order_id} found by TX ref {$tx_ref}", 'mps-vp3d-webhook');
+                }
+            }
         }
 
         $order = $order_id ? wc_get_order($order_id) : null;
 
         if (!$order) {
             MPS_Logger::error("VP3D 3DS Return: Order not found", 'mps-vp3d-webhook');
+            wc_add_notice('Could not locate your order. Please contact support.', 'error');
             wp_redirect(wc_get_checkout_url());
             exit;
         }
+
+        MPS_Logger::info("VP3D 3DS Return: Order #{$order_id} status=" . $order->get_status(), 'mps-vp3d-webhook');
 
         // Already completed? Just redirect to thank-you
         if ($order->has_status(['processing', 'completed'])) {
@@ -89,49 +112,30 @@ class MPS_VProcessor_3D_Webhook {
             exit;
         }
 
-        // Verify request authenticity: order key OR matching external reference
-        $order_key = sanitize_text_field($_GET['key'] ?? '');
-        $ext_ref   = sanitize_text_field($_GET['externalReference'] ?? '');
-        $stored_ref = $order->get_meta('_mps_vp3d_external_ref');
-
-        $key_valid = !empty($order_key) && $order_key === $order->get_order_key();
-        $ref_valid = !empty($ext_ref) && !empty($stored_ref) && $ext_ref === $stored_ref;
-
-        if (!$key_valid && !$ref_valid) {
-            MPS_Logger::error("VP3D 3DS Return: Unauthorized access for order #{$order_id}", 'mps-vp3d-webhook');
-            wc_add_notice('Invalid request. Please try again.', 'error');
+        // Failed
+        if ($order->has_status('failed')) {
+            wc_add_notice('Payment failed. Please try again.', 'error');
             wp_redirect(wc_get_checkout_url());
             exit;
         }
 
-        // Check for base64-encoded 3DS result
-        if (!empty($_GET['result'])) {
-            $threed_result = json_decode(base64_decode($_GET['result']), true);
-            $threed_status = strtoupper($threed_result['status'] ?? '');
-
-            MPS_Logger::debug("VP3D 3DS result decoded: status={$threed_status}", 'mps-vp3d-webhook');
-
-            // Verify transaction ID matches what we stored at charge time
-            $stored_tx_id = $order->get_meta('_mps_vp3d_transaction_id');
-            $result_tx_id = $threed_result['transactionId'] ?? '';
-            $tx_id = $stored_tx_id ?: $result_tx_id;
-
-            if (!empty($result_tx_id) && !empty($stored_tx_id) && $result_tx_id !== $stored_tx_id) {
-                MPS_Logger::error("VP3D 3DS Return: TX ID mismatch for order #{$order_id} — stored: {$stored_tx_id}, received: {$result_tx_id}", 'mps-vp3d-webhook');
-                wc_add_notice('Payment verification failed. Please contact support.', 'error');
-                wp_redirect(wc_get_checkout_url());
-                exit;
-            }
+        // Process the 3DS result
+        if ($threed_result && isset($threed_result['status'])) {
+            $threed_status = strtoupper($threed_result['status']);
+            $stored_tx_id  = $order->get_meta('_mps_vp3d_transaction_id');
+            $result_ref    = $threed_result['reference'] ?? '';
+            $result_tx_id  = $threed_result['transactionId'] ?? '';
+            $auth_number   = $threed_result['authorizationNumber'] ?? '';
+            $tx_id         = $stored_tx_id ?: $result_ref ?: $result_tx_id;
 
             if ($threed_status === 'APPROVED') {
                 if (!$order->has_status(['processing', 'completed'])) {
                     $order->payment_complete($tx_id);
                     wc_reduce_stock_levels($order_id);
-                    $order->add_order_note('VP3D: 3DS verification approved. TX: ' . $tx_id);
+                    $order->add_order_note(sprintf('VP3D: 3DS approved. TX: %s Auth: %s', $tx_id, $auth_number));
                     $order->update_meta_data('_mps_vp3d_webhook_status', 'approved');
                     $order->save();
 
-                    // Report to portal
                     MPS_Transaction_Reporter::report($order, [
                         'status' => 'approved',
                         'processor_tx_id' => $tx_id,
@@ -145,7 +149,7 @@ class MPS_VProcessor_3D_Webhook {
             }
 
             if (in_array($threed_status, ['DECLINED', 'REJECTED', 'FAILED'], true)) {
-                $order->update_status('failed', 'VP3D: 3DS verification ' . $threed_status);
+                $order->update_status('failed', 'VP3D: 3DS ' . $threed_status);
                 $order->update_meta_data('_mps_vp3d_webhook_status', 'declined');
                 $order->save();
 

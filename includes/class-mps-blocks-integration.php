@@ -45,6 +45,7 @@ class MPS_Blocks_Integration extends AbstractPaymentMethodType {
             'supports'     => ['products'],
             'icons'        => $this->get_icons(),
             'supports_3ds' => $this->gateway->supports_3ds,
+            'has_fields'   => $this->gateway->has_fields,
         ];
 
         // Pass countries list for billing address dropdown (3DS only)

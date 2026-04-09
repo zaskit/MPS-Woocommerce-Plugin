@@ -2,14 +2,16 @@
     var params = new URLSearchParams(window.location.search);
     var isVp3d = params.get('mps_vp3d_poll') === '1';
     var isEp2d = params.get('mps_ep2d_poll') === '1';
+    var isEpHosted = params.get('mps_ep_hosted_poll') === '1';
+    var isKp = params.get('mps_kp_poll') === '1';
 
-    if (!isVp3d && !isEp2d) return;
+    if (!isVp3d && !isEp2d && !isEpHosted && !isKp) return;
 
     var orderId = params.get('order_id');
     var orderKey = params.get('key');
     if (!orderId || !orderKey) return;
 
-    var action = isVp3d ? 'mps_vp3d_poll_status' : 'mps_ep2d_poll_status';
+    var action = isVp3d ? 'mps_vp3d_poll_status' : isEp2d ? 'mps_ep2d_poll_status' : isEpHosted ? 'mps_ep_hosted_poll_status' : 'mps_kp_poll_status';
     var maxPollTime = 90000; // 90 seconds
     var pollInterval = 3000; // 3 seconds
     var startTime = Date.now();

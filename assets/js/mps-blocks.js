@@ -50,6 +50,7 @@
 
         var gatewayId = dataVar.id;
         var is3ds = !!dataVar.supports_3ds;
+        var hasFields = !!dataVar.has_fields && dataVar.has_fields !== '0' && dataVar.has_fields !== '';
 
         var Content = function(props){
             var eventRegistration = props.eventRegistration;
@@ -90,6 +91,8 @@
                 elements.push(createElement('p', {key:'desc', style:{marginBottom:'12px',fontSize:'14px',color:'#6b7280'}}, decodeEntities(dataVar.description)));
             }
 
+            // Card fields (skip for hosted gateways)
+            if(hasFields) {
             // Full-width fields (name, card number)
             cardFields.forEach(function(f, i){
                 var fmt = null;
@@ -179,6 +182,7 @@
                     elements.push(createElement('div', {key:'brow-last', className:'mps-row'}, halfFields));
                 }
             }
+            } // end hasFields
 
             // Secure badge
             elements.push(

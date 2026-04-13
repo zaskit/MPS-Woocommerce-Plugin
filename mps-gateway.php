@@ -2,7 +2,7 @@
 /**
  * Plugin Name: MPS Gateway
  * Description: Connect your WooCommerce store to MPS Gateway for multi-processor payment processing. Transactions go directly to processors; the portal manages configuration.
- * Version: 2.1.0
+ * Version: 2.1.1
  * Author: ZASK
  * Author URI: https://zask.it
  * Requires at least: 6.0
@@ -14,7 +14,7 @@ defined('ABSPATH') || exit;
 
 define('MPS_PLUGIN_FILE', __FILE__);
 define('MPS_PLUGIN_DIR', plugin_dir_path(__FILE__));
-define('MPS_PLUGIN_VERSION', '2.1.0');
+define('MPS_PLUGIN_VERSION', '2.1.1');
 
 // HPOS compatibility
 add_action('before_woocommerce_init', function() {
@@ -299,6 +299,7 @@ add_action('plugins_loaded', function() {
 
         wp_enqueue_style('mps-checkout-css', plugin_dir_url(__FILE__) . 'assets/css/mps-checkout.css', [], MPS_PLUGIN_VERSION);
         wp_enqueue_script('mps-card-formatting', plugin_dir_url(__FILE__) . 'assets/js/mps-card-formatting.js', ['jquery'], MPS_PLUGIN_VERSION, true);
+        wp_enqueue_script('mps-ep3d-checkout-poll', plugin_dir_url(__FILE__) . 'assets/js/mps-ep3d-checkout-poll.js', ['jquery'], MPS_PLUGIN_VERSION, true);
     });
 
     // Polling JS on thank-you page
@@ -388,13 +389,10 @@ add_action('plugins_loaded', function() {
         $descriptor = $order->get_meta('_mps_descriptor');
         if (empty($descriptor)) return;
 
-        $msg = sprintf(
-            'Your payment has been processed securely. The charge will appear on your statement as "%s". If you have any questions regarding this transaction, please contact our support team. Please do not do chargebacks.',
-            esc_html($descriptor)
-        );
-
-        echo '<div class="mps-descriptor-message" style="background:#f0f7ff;border-left:4px solid #6366f1;padding:14px 18px;margin:16px 0 24px;border-radius:4px;font-size:15px;line-height:1.6;color:#1d2327;">';
-        echo wp_kses_post(nl2br($msg));
+        echo '<div class="mps-descriptor-message" style="background:#f0f7ff;border:1px solid #c7d2fe;border-left:5px solid #6366f1;padding:20px 24px;margin:20px 0 28px;border-radius:6px;font-size:15px;line-height:1.7;color:#1d2327;">';
+        echo '<div style="font-size:20px;font-weight:700;color:#4338ca;margin-bottom:10px;letter-spacing:0.3px;">' . esc_html($descriptor) . '</div>';
+        echo '<p style="margin:0 0 8px;font-size:15px;">Your payment has been processed securely. The charge will appear on your bank/card statement under the name shown above.</p>';
+        echo '<p style="margin:0;font-size:14px;color:#6b7280;">If you have any questions regarding this transaction, please contact our support team. Please do not initiate chargebacks.</p>';
         echo '</div>';
     }
 
@@ -405,16 +403,15 @@ add_action('plugins_loaded', function() {
         $descriptor = $order->get_meta('_mps_descriptor');
         if (empty($descriptor)) return;
 
-        $msg = sprintf(
-            'Your payment has been processed securely. The charge will appear on your statement as "%s". If you have any questions regarding this transaction, please contact our support team. Please do not do chargebacks.',
-            esc_html($descriptor)
-        );
-
         if ($plain_text) {
-            echo "\n" . wp_strip_all_tags($msg) . "\n\n";
+            echo "\n" . strtoupper($descriptor) . "\n";
+            echo "Your payment has been processed securely. The charge will appear on your bank/card statement under the name shown above.\n";
+            echo "If you have any questions regarding this transaction, please contact our support team. Please do not initiate chargebacks.\n\n";
         } else {
-            echo '<div style="background:#f0f7ff;border-left:4px solid #6366f1;padding:14px 18px;margin:16px 0;font-size:15px;line-height:1.6;color:#1d2327;">';
-            echo wp_kses_post(nl2br($msg));
+            echo '<div style="background:#f0f7ff;border:1px solid #c7d2fe;border-left:5px solid #6366f1;padding:20px 24px;margin:16px 0;border-radius:6px;font-size:15px;line-height:1.7;color:#1d2327;">';
+            echo '<div style="font-size:20px;font-weight:700;color:#4338ca;margin-bottom:10px;letter-spacing:0.3px;">' . esc_html($descriptor) . '</div>';
+            echo '<p style="margin:0 0 8px;font-size:15px;">Your payment has been processed securely. The charge will appear on your bank/card statement under the name shown above.</p>';
+            echo '<p style="margin:0;font-size:14px;color:#6b7280;">If you have any questions regarding this transaction, please contact our support team. Please do not initiate chargebacks.</p>';
             echo '</div>';
         }
     }

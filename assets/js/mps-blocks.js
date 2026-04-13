@@ -16,14 +16,7 @@
         { name: 'card_cvv', label: 'CVC', placeholder: '\u2022\u2022\u2022', maxLength: 4, inputMode: 'numeric', autocomplete: 'cc-csc' },
     ];
 
-    // Billing fields (3DS only)
-    var billingFields = [
-        { name: 'billing_street', label: 'Street Address', placeholder: 'Street address', type: 'text', autocomplete: 'address-line1' },
-        { name: 'billing_city', label: 'City', placeholder: 'City', type: 'text', autocomplete: 'address-level2', half: true },
-        { name: 'billing_state', label: 'State / Province', placeholder: 'e.g. MO, NY', type: 'text', autocomplete: 'address-level1', maxLength: 50, half: true },
-        { name: 'billing_country', label: 'Country', type: 'select', autocomplete: 'country', half: true },
-        { name: 'billing_zip', label: 'ZIP / Postal Code', placeholder: 'ZIP / Postal', type: 'text', autocomplete: 'postal-code', maxLength: 10, half: true },
-    ];
+    // Billing fields removed — uses WC checkout billing details
 
     function formatCardNumber(val) {
         var d = val.replace(/\D/g,'').substring(0,16);
@@ -131,57 +124,7 @@
             });
             elements.push(createElement('div', {key:'row', className:'mps-row'}, rowChildren));
 
-            // Billing address (3DS gateways only)
-            if(is3ds) {
-                var countries = dataVar.countries || [];
-                var defaultCountry = dataVar.defaultCountry || '';
-
-                elements.push(createElement('div', {key:'billing-heading', className:'mps-billing-heading'}, 'Cardholder Billing Address'));
-
-                var halfFields = [];
-                billingFields.forEach(function(bf, bi){
-                    var fieldEl;
-                    if(bf.type === 'select'){
-                        var options = [createElement('option', {key:'empty', value:''}, 'Select country\u2026')];
-                        countries.forEach(function(c){
-                            options.push(createElement('option', {key:c.code, value:c.code}, c.name));
-                        });
-                        fieldEl = createElement('div', {key:'b'+bi, className:'mps-field'},
-                            createElement('label', null, bf.label),
-                            createElement('select', {
-                                autoComplete: bf.autocomplete || undefined,
-                                defaultValue: defaultCountry,
-                                onChange: function(e){ stateRef.current[bf.name] = e.target.value; },
-                                ref: function(el){ if(el && defaultCountry) stateRef.current[bf.name] = defaultCountry; }
-                            }, options)
-                        );
-                    } else {
-                        fieldEl = createElement('div', {key:'b'+bi, className:'mps-field'},
-                            createElement('label', null, bf.label),
-                            createElement('input', {
-                                type: bf.type || 'text',
-                                placeholder: bf.placeholder || '',
-                                maxLength: bf.maxLength || undefined,
-                                autoComplete: bf.autocomplete || undefined,
-                                onChange: handleChange(bf.name, null)
-                            })
-                        );
-                    }
-
-                    if(bf.half){
-                        halfFields.push(fieldEl);
-                        if(halfFields.length === 2){
-                            elements.push(createElement('div', {key:'brow'+bi, className:'mps-row'}, halfFields));
-                            halfFields = [];
-                        }
-                    } else {
-                        elements.push(fieldEl);
-                    }
-                });
-                if(halfFields.length > 0){
-                    elements.push(createElement('div', {key:'brow-last', className:'mps-row'}, halfFields));
-                }
-            }
+            // Billing address fields removed — uses WC checkout billing details
             } // end hasFields
 
             // Secure badge

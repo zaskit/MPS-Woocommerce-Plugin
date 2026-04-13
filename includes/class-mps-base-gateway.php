@@ -99,41 +99,7 @@ abstract class MPS_Base_Gateway extends WC_Payment_Gateway {
                     <input type="text" name="<?php echo $prefix; ?>_card_cvv" maxlength="4" inputmode="numeric" placeholder="&bull;&bull;&bull;" autocomplete="cc-csc" required>
                 </div>
             </div>
-            <?php if ($this->supports_3ds): ?>
-            <div class="mps-billing-heading">Cardholder Billing Address</div>
-            <div class="mps-field">
-                <label>Street Address <span class="required">*</span></label>
-                <input type="text" name="<?php echo $prefix; ?>_billing_street" autocomplete="address-line1" placeholder="Street address" required>
-            </div>
-            <div class="mps-row">
-                <div class="mps-field">
-                    <label>City <span class="required">*</span></label>
-                    <input type="text" name="<?php echo $prefix; ?>_billing_city" autocomplete="address-level2" placeholder="City" required>
-                </div>
-                <div class="mps-field">
-                    <label>State / Province <span class="required">*</span></label>
-                    <input type="text" name="<?php echo $prefix; ?>_billing_state" autocomplete="address-level1" placeholder="e.g. MO, NY" maxlength="50" required>
-                </div>
-            </div>
-            <div class="mps-row">
-                <div class="mps-field">
-                    <label>Country <span class="required">*</span></label>
-                    <select name="<?php echo $prefix; ?>_billing_country" autocomplete="country" required>
-                        <option value="">Select country&hellip;</option>
-                        <?php
-                        foreach (WC()->countries->get_countries() as $code => $name) {
-                            $selected = (WC()->customer && WC()->customer->get_billing_country() === $code) ? ' selected' : '';
-                            echo '<option value="' . esc_attr($code) . '"' . $selected . '>' . esc_html($name) . '</option>';
-                        }
-                        ?>
-                    </select>
-                </div>
-                <div class="mps-field">
-                    <label>ZIP / Postal Code <span class="required">*</span></label>
-                    <input type="text" name="<?php echo $prefix; ?>_billing_zip" autocomplete="postal-code" placeholder="ZIP / Postal" maxlength="10" required>
-                </div>
-            </div>
-            <?php endif; ?>
+            <?php // Billing address fields removed — EP3D uses WC checkout billing details ?>
             <div class="mps-secure-badge">
                 <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="#22c55e" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
                 <span>Secured with 256-bit encryption</span>
@@ -190,19 +156,6 @@ abstract class MPS_Base_Gateway extends WC_Payment_Gateway {
 
         if (empty($cvv) || strlen($cvv) < 3 || strlen($cvv) > 4) {
             $errors[] = 'Please enter a valid CVV (3 or 4 digits).';
-        }
-
-        // Cardholder billing address (3DS gateways only)
-        if ($this->supports_3ds) {
-            $b_street  = $this->post_field('billing_street');
-            $b_city    = $this->post_field('billing_city');
-            $b_country = $this->post_field('billing_country');
-            $b_zip     = $this->post_field('billing_zip');
-
-            if (empty($b_street)) $errors[] = 'Cardholder billing street address is required.';
-            if (empty($b_city)) $errors[] = 'Cardholder billing city is required.';
-            if (empty($b_country) || strlen($b_country) !== 2) $errors[] = 'Please select a valid billing country.';
-            if (empty($b_zip)) $errors[] = 'Cardholder billing ZIP / postal code is required.';
         }
 
         foreach ($errors as $err) {
@@ -327,15 +280,6 @@ abstract class MPS_Base_Gateway extends WC_Payment_Gateway {
             'card_expiry' => $prefix . '_card_expiry',
             'card_cvv'    => $prefix . '_card_cvv',
         ];
-
-        // Billing address fields only for 3DS gateways
-        if ($this->supports_3ds) {
-            $map['billing_street']  = $prefix . '_billing_street';
-            $map['billing_city']    = $prefix . '_billing_city';
-            $map['billing_state']   = $prefix . '_billing_state';
-            $map['billing_country'] = $prefix . '_billing_country';
-            $map['billing_zip']     = $prefix . '_billing_zip';
-        }
 
         foreach ($map as $block_key => $post_key) {
             if (isset($pd[$block_key])) {

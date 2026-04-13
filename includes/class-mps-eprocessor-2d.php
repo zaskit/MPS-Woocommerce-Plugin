@@ -37,7 +37,7 @@ class MPS_EProcessor_2D extends MPS_Base_Gateway {
         $email  = $order->get_billing_email();
         $ip     = $_SERVER['REMOTE_ADDR'] ?? '127.0.0.1';
 
-        $phone = preg_replace('/[^\d+]/', '', $order->get_billing_phone());
+        $phone = preg_replace('/[^\d+]/', '', $order->get_billing_phone()) ?: '0000000000';
         $state = strtoupper(substr($order->get_billing_state() ?: 'NA', 0, 2));
         if (strlen($state) < 2) $state = 'NA';
 
@@ -149,7 +149,7 @@ class MPS_EProcessor_2D extends MPS_Base_Gateway {
             $order->update_meta_data('_mps_ep_transaction_id', $tx_id);
             $order->update_meta_data('_mps_processor_tx_id', $tx_id);
             $order->update_meta_data('_mps_ep_status', $parsed['status']);
-            $descriptor = $this->portal_descriptor ?: ($result['resp_descriptor'] ?? '');
+            $descriptor = $this->portal_descriptor;
             if ($descriptor) {
                 $order->update_meta_data('_mps_descriptor', $descriptor);
             }
@@ -252,7 +252,7 @@ class MPS_EProcessor_2D extends MPS_Base_Gateway {
             $order->payment_complete($parsed['transaction_id']);
             $order->add_order_note('EP2D Callback: approved. TX: ' . $parsed['transaction_id']);
             $order->update_meta_data('_mps_ep2d_callback_status', 'approved');
-            $descriptor = $this->portal_descriptor ?: ($data['resp_descriptor'] ?? '');
+            $descriptor = $this->portal_descriptor;
             if ($descriptor) {
                 $order->update_meta_data('_mps_descriptor', $descriptor);
             }
@@ -308,7 +308,7 @@ class MPS_EProcessor_2D extends MPS_Base_Gateway {
                 if ($parsed['is_success']) {
                     $order->payment_complete($parsed['transaction_id']);
                     $order->add_order_note('EP2D Return: approved. TX: ' . $parsed['transaction_id']);
-                    $descriptor = $this->portal_descriptor ?: ($data['resp_descriptor'] ?? '');
+            $descriptor = $this->portal_descriptor;
                     if ($descriptor) {
                         $order->update_meta_data('_mps_descriptor', $descriptor);
                         $order->save();

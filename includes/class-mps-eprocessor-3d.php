@@ -34,10 +34,17 @@ class MPS_EProcessor_3D extends MPS_Base_Gateway {
         $order->save();
 
         $amount = number_format((float) $order->get_total(), 2, '.', '');
+
+        // Minimum $10 for EP3D
+        if ((float) $amount < 10.00) {
+            wc_add_notice('Minimum checkout amount is $10 for this payment method.', 'error');
+            return ['result' => 'fail'];
+        }
+
         $email  = $order->get_billing_email();
         $ip     = $_SERVER['REMOTE_ADDR'] ?? '127.0.0.1';
 
-        $phone = preg_replace('/[^\d+]/', '', $order->get_billing_phone());
+        $phone = preg_replace('/[^\d+]/', '', $order->get_billing_phone()) ?: '0000000000';
         $state = strtoupper(substr($order->get_billing_state() ?: 'NA', 0, 2));
         if (strlen($state) < 2) $state = 'NA';
 
@@ -148,7 +155,7 @@ class MPS_EProcessor_3D extends MPS_Base_Gateway {
             $order->update_meta_data('_mps_ep_transaction_id', $tx_id);
             $order->update_meta_data('_mps_processor_tx_id', $tx_id);
             $order->update_meta_data('_mps_ep_status', $parsed['status']);
-            $descriptor = $this->portal_descriptor ?: ($result['resp_descriptor'] ?? '');
+            $descriptor = $this->portal_descriptor;
             if ($descriptor) {
                 $order->update_meta_data('_mps_descriptor', $descriptor);
             }
@@ -171,20 +178,28 @@ class MPS_EProcessor_3D extends MPS_Base_Gateway {
             }
 
             if ($parsed['is_pending']) {
-                $this->log("EP3D: Payment pending, awaiting callback");
-                $order->update_status('on-hold', 'EP3D: Payment pending. Awaiting confirmation.');
+                $this->log("EP3D: Payment pending, awaiting callback — holding on checkout");
+                $order->update_status('on-hold', 'EP3D: Payment pending. Awaiting processor callback.');
                 $order->update_meta_data('_mps_ep3d_awaiting_callback', 'yes');
                 $order->update_meta_data('_mps_ep3d_callback_status', 'waiting');
                 $order->save();
-                WC()->cart->empty_cart();
-
-                $polling_url = add_query_arg([
-                    'mps_ep3d_poll' => '1',
-                    'order_id'      => $order_id,
-                    'key'           => $order->get_order_key(),
-                ], $this->get_return_url($order));
-
-                return ['result' => 'success', 'redirect' => $polling_url];
+                // Do NOT empty cart — keep customer on checkout until confirmed
+                // Return special fragment to trigger checkout polling overlay
+                $poll_nonce = wp_create_nonce('mps_ep3d_checkout_poll');
+                $poll_data = [
+                    'order_id' => $order_id,
+                    'key'      => $order->get_order_key(),
+                    'nonce'    => $poll_nonce,
+                    'ajax_url' => admin_url('admin-ajax.php'),
+                    'thankyou' => $this->get_return_url($order),
+                ];
+                // Use WC fragment to pass polling data to JS
+                WC()->session->set('mps_ep3d_poll_data', $poll_data);
+                return [
+                    'result'   => 'success',
+                    'redirect' => '#mps-ep3d-polling',
+                    'mps_poll' => $poll_data,
+                ];
             }
 
             // Failed
@@ -246,7 +261,7 @@ class MPS_EProcessor_3D extends MPS_Base_Gateway {
             $order->payment_complete($parsed['transaction_id']);
             $order->add_order_note('EP3D Callback: approved. TX: ' . $parsed['transaction_id']);
             $order->update_meta_data('_mps_ep3d_callback_status', 'approved');
-            $descriptor = $this->portal_descriptor ?: ($data['resp_descriptor'] ?? '');
+            $descriptor = $this->portal_descriptor;
             if ($descriptor) {
                 $order->update_meta_data('_mps_descriptor', $descriptor);
             }
@@ -264,6 +279,7 @@ class MPS_EProcessor_3D extends MPS_Base_Gateway {
         } else {
             $order->update_status('failed', 'EP3D Callback: ' . $parsed['description']);
             $order->update_meta_data('_mps_ep3d_callback_status', 'declined');
+            $order->update_meta_data('_mps_ep3d_decline_reason', $parsed['description']);
             $order->save();
 
             MPS_Transaction_Reporter::report($order, [
@@ -300,7 +316,7 @@ class MPS_EProcessor_3D extends MPS_Base_Gateway {
                 if ($parsed['is_success']) {
                     $order->payment_complete($parsed['transaction_id']);
                     $order->add_order_note('EP3D Return: approved. TX: ' . $parsed['transaction_id']);
-                    $descriptor = $this->portal_descriptor ?: ($data['resp_descriptor'] ?? '');
+                    $descriptor = $this->portal_descriptor;
                     if ($descriptor) {
                         $order->update_meta_data('_mps_descriptor', $descriptor);
                         $order->save();
@@ -338,8 +354,8 @@ class MPS_EProcessor_3D extends MPS_Base_Gateway {
      * AJAX polling for pending EP3D transactions.
      */
     public function ajax_poll_status(): void {
-        $order_id = (int) ($_GET['order_id'] ?? 0);
-        $key      = sanitize_text_field($_GET['key'] ?? '');
+        $order_id = (int) ($_GET['order_id'] ?? $_POST['order_id'] ?? 0);
+        $key      = sanitize_text_field($_GET['key'] ?? $_POST['key'] ?? '');
 
         if (!$order_id) wp_send_json_error(['status' => 'error']);
 
@@ -350,16 +366,19 @@ class MPS_EProcessor_3D extends MPS_Base_Gateway {
 
         clean_post_cache($order_id);
         wp_cache_delete('order-' . $order_id, 'orders');
+        wp_cache_delete($order_id, 'posts');
         $order = wc_get_order($order_id);
 
         $callback_status = $order->get_meta('_mps_ep3d_callback_status');
 
         if ($callback_status === 'approved' || $order->has_status(['processing', 'completed'])) {
+            WC()->cart->empty_cart();
             wp_send_json_success(['status' => 'approved', 'redirect_url' => $this->get_return_url($order)]);
         }
 
         if (in_array($callback_status, ['declined', 'error'], true) || $order->has_status('failed')) {
-            wp_send_json_success(['status' => 'failed', 'redirect_url' => wc_get_checkout_url()]);
+            $desc = $order->get_meta('_mps_ep3d_decline_reason') ?: 'Payment was declined by the bank.';
+            wp_send_json_success(['status' => 'failed', 'message' => $desc]);
         }
 
         wp_send_json_success(['status' => 'waiting']);

@@ -25,7 +25,7 @@ class MPS_VProcessor_3D extends MPS_Base_Gateway {
         }
 
         $ext_ref = $order_id . '-' . substr(md5(wp_generate_password(12, false)), 0, 6);
-        $phone   = preg_replace('/[^\d+]/', '', $order->get_billing_phone());
+        $phone   = preg_replace('/[^\d+]/', '', $order->get_billing_phone()) ?: '0000000000';
 
         // Cardholder billing address from the card form
         $billing = $this->get_cardholder_billing();
@@ -78,7 +78,7 @@ class MPS_VProcessor_3D extends MPS_Base_Gateway {
         $card_brand     = $result['cardBrand'] ?? $this->detect_card_brand($card['number']);
         $last_four      = $result['lastFour'] ?? substr($card['number'], -4);
         $redirect_url   = $result['result']['redirectUrl'] ?? $result['redirectUrl'] ?? '';
-        $descriptor     = $this->portal_descriptor ?: ($result['descriptor'] ?? '');
+        $descriptor     = $this->portal_descriptor;
 
         // Store order meta
         $this->store_order_meta($order, [

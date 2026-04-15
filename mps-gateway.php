@@ -2,7 +2,7 @@
 /**
  * Plugin Name: MPS Gateway
  * Description: Connect your WooCommerce store to MPS Gateway for multi-processor payment processing. Transactions go directly to processors; the portal manages configuration.
- * Version: 2.1.1
+ * Version: 2.1.2
  * Author: ZASK
  * Author URI: https://zask.it
  * Requires at least: 6.0

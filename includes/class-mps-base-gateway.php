@@ -305,6 +305,17 @@ abstract class MPS_Base_Gateway extends WC_Payment_Gateway {
         return $icons[0] ?? '';
     }
 
+    public function get_icon(): string {
+        $base = plugin_dir_url(MPS_PLUGIN_FILE) . 'assets/img/';
+        $html = '';
+        foreach ($this->supported_cards as $brand) {
+            if (in_array($brand, ['visa', 'mastercard'], true)) {
+                $html .= '<img src="' . esc_url($base . $brand . '.svg') . '" alt="' . esc_attr(ucfirst($brand)) . '" style="max-height:24px;margin-right:4px;vertical-align:middle;" />';
+            }
+        }
+        return apply_filters('woocommerce_gateway_icon', $html, $this->id);
+    }
+
     protected function log(string $message): void {
         MPS_Logger::debug($message, 'mps-' . $this->processor_code . $this->processor_type);
     }

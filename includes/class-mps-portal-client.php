@@ -222,13 +222,21 @@ class MPS_Portal_Client {
             if (strpos($method, 'mps_') !== 0) continue;
 
             $status = $order->get_status();
-            // Only report finalized orders (processing, completed, failed)
-            if (!in_array($status, ['processing', 'completed', 'failed', 'refunded'])) continue;
+            // Only report finalized orders
+            if (!in_array($status, ['processing', 'completed', 'failed', 'refunded', 'cancelled'])) continue;
+
+            // Map WC status to portal status
+            $portal_status = match ($status) {
+                'processing', 'completed' => 'approved',
+                'refunded' => 'refunded',
+                'cancelled' => 'cancelled',
+                default => 'declined',
+            };
 
             $order_list[] = [
                 'order_ref'       => (string) $order_id,
                 'gateway_id'      => $order->get_meta('_mps_portal_gateway_id'),
-                'status'          => in_array($status, ['processing', 'completed', 'refunded']) ? 'approved' : 'declined',
+                'status'          => $portal_status,
                 'amount'          => (float) $order->get_total(),
                 'currency'        => $order->get_currency(),
                 'processor_tx_id' => $order->get_meta('_mps_processor_tx_id') ?: $order->get_transaction_id(),

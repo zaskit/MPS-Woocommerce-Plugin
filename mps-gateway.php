@@ -2,7 +2,7 @@
 /**
  * Plugin Name: MPS Gateway
  * Description: Connect your WooCommerce store to MPS Gateway for multi-processor payment processing. Transactions go directly to processors; the portal manages configuration.
- * Version: 2.1.2
+ * Version: 2.1.3
  * Author: ZASK
  * Author URI: https://zask.it
  * Requires at least: 6.0
@@ -14,7 +14,7 @@ defined('ABSPATH') || exit;
 
 define('MPS_PLUGIN_FILE', __FILE__);
 define('MPS_PLUGIN_DIR', plugin_dir_path(__FILE__));
-define('MPS_PLUGIN_VERSION', '2.1.1');
+define('MPS_PLUGIN_VERSION', '2.1.3');
 
 // HPOS compatibility
 add_action('before_woocommerce_init', function() {
@@ -454,6 +454,35 @@ add_action('plugins_loaded', function() {
         $gateway->process_callback($params);
 
         return new WP_REST_Response(['status' => 'ok'], 200);
+    }
+
+    // ─── Post-Payment Status Sync (Cancel/Refund → Portal) ───
+    add_action('woocommerce_order_status_cancelled', 'mps_sync_order_status_to_portal', 10, 1);
+    add_action('woocommerce_order_status_refunded', 'mps_sync_order_status_to_portal', 10, 1);
+
+    function mps_sync_order_status_to_portal($order_id) {
+        $order = wc_get_order($order_id);
+        if (!$order) return;
+
+        // Only for MPS gateway orders
+        if (strpos($order->get_payment_method(), 'mps_') !== 0) return;
+
+        $wc_status = $order->get_status();
+        $portal_status = ($wc_status === 'refunded') ? 'refunded' : 'cancelled';
+
+        $data = [
+            'gateway_id'      => $order->get_meta('_mps_portal_gateway_id'),
+            'order_ref'       => (string) $order->get_id(),
+            'processor_tx_id' => $order->get_meta('_mps_processor_tx_id') ?: null,
+            'amount'          => (float) $order->get_total(),
+            'currency'        => $order->get_currency(),
+            'status'          => $portal_status,
+            'status_message'  => ucfirst($portal_status) . ' by merchant',
+            'customer_email'  => $order->get_billing_email(),
+        ];
+
+        $result = MPS_Portal_Client::report_transaction($data);
+        MPS_Logger::info("Order #{$order_id} status sync to portal: {$portal_status} — " . ($result ? 'success' : 'queued for retry'), 'mps-reporter');
     }
 
     // ─── EP2D Callback & Return Endpoints ───

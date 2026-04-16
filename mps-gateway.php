@@ -614,17 +614,36 @@ add_filter('pre_set_site_transient_update_plugins', function($transient) {
     $remote = get_transient($cache_key);
 
     if ($remote === false) {
+        // Try releases first, fall back to tags
         $response = wp_remote_get("https://api.github.com/repos/{$github_repo}/releases/latest", [
             'timeout' => 10,
             'headers' => ['Accept' => 'application/vnd.github.v3+json'],
         ]);
 
-        if (is_wp_error($response) || wp_remote_retrieve_response_code($response) !== 200) {
-            return $transient;
+        if (!is_wp_error($response) && wp_remote_retrieve_response_code($response) === 200) {
+            $remote = json_decode(wp_remote_retrieve_body($response));
+        } else {
+            // Fallback: check latest tag
+            $response = wp_remote_get("https://api.github.com/repos/{$github_repo}/tags?per_page=1", [
+                'timeout' => 10,
+                'headers' => ['Accept' => 'application/vnd.github.v3+json'],
+            ]);
+            if (!is_wp_error($response) && wp_remote_retrieve_response_code($response) === 200) {
+                $tags = json_decode(wp_remote_retrieve_body($response));
+                if (!empty($tags[0]->name)) {
+                    $remote = (object) [
+                        'tag_name'   => $tags[0]->name,
+                        'zipball_url' => $tags[0]->zipball_url ?? null,
+                    ];
+                }
+            }
         }
 
-        $remote = json_decode(wp_remote_retrieve_body($response));
-        set_transient($cache_key, $remote, 6 * HOUR_IN_SECONDS);
+        if (!empty($remote)) {
+            set_transient($cache_key, $remote, 6 * HOUR_IN_SECONDS);
+        } else {
+            return $transient;
+        }
     }
 
     if (empty($remote->tag_name)) return $transient;
@@ -652,16 +671,28 @@ add_filter('plugins_api', function($result, $action, $args) {
     if ($args->slug !== $plugin_slug) return $result;
 
     $github_repo = 'zaskit/MPS-Woocommerce-Plugin';
+
+    // Try releases first, fall back to tags
+    $remote = null;
     $response = wp_remote_get("https://api.github.com/repos/{$github_repo}/releases/latest", [
         'timeout' => 10,
         'headers' => ['Accept' => 'application/vnd.github.v3+json'],
     ]);
-
-    if (is_wp_error($response) || wp_remote_retrieve_response_code($response) !== 200) {
-        return $result;
+    if (!is_wp_error($response) && wp_remote_retrieve_response_code($response) === 200) {
+        $remote = json_decode(wp_remote_retrieve_body($response));
+    } else {
+        $response = wp_remote_get("https://api.github.com/repos/{$github_repo}/tags?per_page=1", [
+            'timeout' => 10,
+            'headers' => ['Accept' => 'application/vnd.github.v3+json'],
+        ]);
+        if (!is_wp_error($response) && wp_remote_retrieve_response_code($response) === 200) {
+            $tags = json_decode(wp_remote_retrieve_body($response));
+            if (!empty($tags[0]->name)) {
+                $remote = (object) ['tag_name' => $tags[0]->name, 'zipball_url' => $tags[0]->zipball_url ?? null, 'body' => '', 'published_at' => ''];
+            }
+        }
     }
 
-    $remote = json_decode(wp_remote_retrieve_body($response));
     if (empty($remote->tag_name)) return $result;
 
     return (object) [

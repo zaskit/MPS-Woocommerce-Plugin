@@ -2,7 +2,7 @@
 /**
  * Plugin Name: MPS Gateway
  * Description: Connect your WooCommerce store to MPS Gateway for multi-processor payment processing. Transactions go directly to processors; the portal manages configuration.
- * Version: 2.1.3
+ * Version: 2.2.0
  * Author: ZASK
  * Author URI: https://zask.it
  * Requires at least: 6.0
@@ -14,7 +14,7 @@ defined('ABSPATH') || exit;
 
 define('MPS_PLUGIN_FILE', __FILE__);
 define('MPS_PLUGIN_DIR', plugin_dir_path(__FILE__));
-define('MPS_PLUGIN_VERSION', '2.1.3');
+define('MPS_PLUGIN_VERSION', '2.2.0');
 
 // HPOS compatibility
 add_action('before_woocommerce_init', function() {
@@ -554,7 +554,7 @@ add_action('mps_reconcile_transactions', function() {
     MPS_Portal_Client::reconcile();
 });
 
-// ─── Flush rewrite rules on activation ───
+// ─── Activation: flush rewrites, schedule cron, redirect to settings ───
 register_activation_hook(__FILE__, function() {
     add_rewrite_endpoint('mps-eupaymentz-callback', EP_ROOT);
     add_rewrite_endpoint('mps-eupaymentz-return', EP_ROOT);
@@ -567,6 +567,21 @@ register_activation_hook(__FILE__, function() {
     if (!wp_next_scheduled('mps_reconcile_transactions')) {
         wp_schedule_event(time(), 'twicedaily', 'mps_reconcile_transactions');
     }
+
+    // Flag for redirect to settings page
+    set_transient('mps_activation_redirect', true, 30);
+});
+
+// Redirect to settings on first activation
+add_action('admin_init', function() {
+    if (!get_transient('mps_activation_redirect')) return;
+    delete_transient('mps_activation_redirect');
+
+    // Don't redirect on bulk activate or network admin
+    if (wp_doing_ajax() || is_network_admin() || isset($_GET['activate-multi'])) return;
+
+    wp_safe_redirect(admin_url('admin.php?page=wc-settings&tab=checkout&section=mps_settings'));
+    exit;
 });
 
 register_deactivation_hook(__FILE__, function() {
@@ -583,3 +598,104 @@ add_filter('cron_schedules', function($schedules) {
     ];
     return $schedules;
 });
+
+// ─── GitHub Auto-Updater ───
+// Checks zaskit/MPS-Woocommerce-Plugin releases for new versions.
+// WordPress will show "Update available" and allow one-click update.
+add_filter('pre_set_site_transient_update_plugins', function($transient) {
+    if (empty($transient->checked)) return $transient;
+
+    $plugin_slug = plugin_basename(MPS_PLUGIN_FILE);
+    $current_version = MPS_PLUGIN_VERSION;
+    $github_repo = 'zaskit/MPS-Woocommerce-Plugin';
+
+    // Check GitHub for latest release (cached for 6 hours)
+    $cache_key = 'mps_github_update_check';
+    $remote = get_transient($cache_key);
+
+    if ($remote === false) {
+        $response = wp_remote_get("https://api.github.com/repos/{$github_repo}/releases/latest", [
+            'timeout' => 10,
+            'headers' => ['Accept' => 'application/vnd.github.v3+json'],
+        ]);
+
+        if (is_wp_error($response) || wp_remote_retrieve_response_code($response) !== 200) {
+            return $transient;
+        }
+
+        $remote = json_decode(wp_remote_retrieve_body($response));
+        set_transient($cache_key, $remote, 6 * HOUR_IN_SECONDS);
+    }
+
+    if (empty($remote->tag_name)) return $transient;
+
+    $remote_version = ltrim($remote->tag_name, 'v');
+
+    if (version_compare($remote_version, $current_version, '>')) {
+        $transient->response[$plugin_slug] = (object) [
+            'slug'        => dirname($plugin_slug),
+            'plugin'      => $plugin_slug,
+            'new_version' => $remote_version,
+            'url'         => "https://github.com/{$github_repo}",
+            'package'     => $remote->zipball_url ?? "https://github.com/{$github_repo}/archive/refs/tags/{$remote->tag_name}.zip",
+        ];
+    }
+
+    return $transient;
+});
+
+// Plugin info popup (when user clicks "View details")
+add_filter('plugins_api', function($result, $action, $args) {
+    if ($action !== 'plugin_information') return $result;
+
+    $plugin_slug = dirname(plugin_basename(MPS_PLUGIN_FILE));
+    if ($args->slug !== $plugin_slug) return $result;
+
+    $github_repo = 'zaskit/MPS-Woocommerce-Plugin';
+    $response = wp_remote_get("https://api.github.com/repos/{$github_repo}/releases/latest", [
+        'timeout' => 10,
+        'headers' => ['Accept' => 'application/vnd.github.v3+json'],
+    ]);
+
+    if (is_wp_error($response) || wp_remote_retrieve_response_code($response) !== 200) {
+        return $result;
+    }
+
+    $remote = json_decode(wp_remote_retrieve_body($response));
+    if (empty($remote->tag_name)) return $result;
+
+    return (object) [
+        'name'          => 'MPS Gateway',
+        'slug'          => $plugin_slug,
+        'version'       => ltrim($remote->tag_name, 'v'),
+        'author'        => '<a href="https://zask.it">ZASK</a>',
+        'homepage'      => "https://github.com/{$github_repo}",
+        'requires'      => '6.0',
+        'requires_php'  => '8.0',
+        'downloaded'    => 0,
+        'last_updated'  => $remote->published_at ?? '',
+        'sections'      => [
+            'description'  => 'Multi-processor payment gateway for WooCommerce. Connect to MPS Gateway portal for centralized processor management.',
+            'changelog'    => nl2br(esc_html($remote->body ?? 'See GitHub for details.')),
+        ],
+        'download_link' => $remote->zipball_url ?? "https://github.com/{$github_repo}/archive/refs/tags/{$remote->tag_name}.zip",
+    ];
+}, 10, 3);
+
+// Fix folder name after GitHub ZIP extraction (GitHub adds repo-name-hash prefix)
+add_filter('upgrader_source_selection', function($source, $remote_source, $upgrader, $hook_extra) {
+    if (!isset($hook_extra['plugin']) || $hook_extra['plugin'] !== plugin_basename(MPS_PLUGIN_FILE)) {
+        return $source;
+    }
+
+    $expected_dir = dirname(plugin_basename(MPS_PLUGIN_FILE));
+    $corrected = trailingslashit($remote_source) . $expected_dir . '/';
+
+    if ($source !== $corrected) {
+        if (rename($source, $corrected)) {
+            return $corrected;
+        }
+    }
+
+    return $source;
+}, 10, 4);

@@ -2,7 +2,7 @@
 /**
  * Plugin Name: MPS Gateway
  * Description: Connect your WooCommerce store to MPS Gateway for multi-processor payment processing. Transactions go directly to processors; the portal manages configuration.
- * Version: 2.2.0
+ * Version: 2.2.1
  * Author: ZASK
  * Author URI: https://zask.it
  * Requires at least: 6.0
@@ -14,7 +14,7 @@ defined('ABSPATH') || exit;
 
 define('MPS_PLUGIN_FILE', __FILE__);
 define('MPS_PLUGIN_DIR', plugin_dir_path(__FILE__));
-define('MPS_PLUGIN_VERSION', '2.2.0');
+define('MPS_PLUGIN_VERSION', '2.2.1');
 
 // HPOS compatibility
 add_action('before_woocommerce_init', function() {
@@ -236,6 +236,17 @@ add_action('plugins_loaded', function() {
                 .form-table tr td { padding-top: 8px; padding-bottom: 8px; }
             </style>';
             parent::admin_options();
+
+            $kp_callback_url = esc_url_raw(rest_url('mps-kprocessor/v1/callback'));
+            $kp_callback_url_legacy = esc_url_raw(rest_url('wpgfull/v1/callback'));
+
+            echo '<table class="form-table">';
+            echo '<tr><th>K-Processor Callback URL</th><td>';
+            echo '<input type="text" readonly value="' . esc_attr($kp_callback_url) . '" style="width:520px;font-family:monospace;" onclick="this.select()">';
+            echo '<p class="description">Share this URL with the K-Processor (Payvelonix) support team and ask them to register it as the notification / callback URL for your merchant account. Required for K-Processor (2D and 3D) payments to complete — without it, customers redirect to the hosted page but the order never updates after payment.</p>';
+            echo '<p class="description" style="margin-top:6px;"><strong>Legacy URL (also accepted):</strong> <code>' . esc_html($kp_callback_url_legacy) . '</code></p>';
+            echo '</td></tr>';
+            echo '</table>';
 
             $nonce = wp_create_nonce('mps_admin');
             echo '<table class="form-table"><tr><th>Connection</th><td>';

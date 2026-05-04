@@ -2,7 +2,7 @@
 /**
  * Plugin Name: MPS Gateway
  * Description: Connect your WooCommerce store to MPS Gateway for multi-processor payment processing. Transactions go directly to processors; the portal manages configuration.
- * Version: 2.2.1
+ * Version: 2.2.2
  * Author: ZASK
  * Author URI: https://zask.it
  * Requires at least: 6.0
@@ -12,9 +12,27 @@
 
 defined('ABSPATH') || exit;
 
+// Duplicate-install guard.
+// If a copy of this plugin is already loaded (e.g. an old folder like
+// MPS-Woocommerce-Plugin-main/ alongside the canonical mps-gateway/), bail
+// before redeclaring constants/classes — otherwise PHP fatals on redeclare
+// and the site goes down. Surface an admin notice so the merchant can clean
+// up the duplicate folder.
+if (defined('MPS_PLUGIN_FILE')) {
+    $mps_dup_first  = plugin_basename(MPS_PLUGIN_FILE);
+    $mps_dup_second = plugin_basename(__FILE__);
+    add_action('admin_notices', function() use ($mps_dup_first, $mps_dup_second) {
+        if (!current_user_can('activate_plugins')) return;
+        echo '<div class="notice notice-error"><p><strong>MPS Gateway:</strong> Two copies of this plugin are installed. Only the first is active; the second has been skipped to prevent a fatal error.</p>';
+        echo '<ul style="list-style:disc;padding-left:24px;margin:8px 0;"><li>Active: <code>' . esc_html($mps_dup_first) . '</code></li><li>Skipped: <code>' . esc_html($mps_dup_second) . '</code></li></ul>';
+        echo '<p>Delete the skipped copy from <code>wp-content/plugins/</code> (via SFTP or the Plugins admin page). Going forward, MPS Gateway should always live in <code>mps-gateway/</code>.</p></div>';
+    });
+    return;
+}
+
 define('MPS_PLUGIN_FILE', __FILE__);
 define('MPS_PLUGIN_DIR', plugin_dir_path(__FILE__));
-define('MPS_PLUGIN_VERSION', '2.2.1');
+define('MPS_PLUGIN_VERSION', '2.2.2');
 
 // HPOS compatibility
 add_action('before_woocommerce_init', function() {

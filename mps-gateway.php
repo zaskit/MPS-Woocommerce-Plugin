@@ -2,7 +2,7 @@
 /**
  * Plugin Name: MPS Gateway
  * Description: Connect your WooCommerce store to MPS Gateway for multi-processor payment processing. Transactions go directly to processors; the portal manages configuration.
- * Version: 2.2.2
+ * Version: 2.2.3
  * Author: ZASK
  * Author URI: https://zask.it
  * Requires at least: 6.0
@@ -32,7 +32,7 @@ if (defined('MPS_PLUGIN_FILE')) {
 
 define('MPS_PLUGIN_FILE', __FILE__);
 define('MPS_PLUGIN_DIR', plugin_dir_path(__FILE__));
-define('MPS_PLUGIN_VERSION', '2.2.2');
+define('MPS_PLUGIN_VERSION', '2.2.3');
 
 // HPOS compatibility
 add_action('before_woocommerce_init', function() {
@@ -43,6 +43,19 @@ add_action('before_woocommerce_init', function() {
 
 add_action('plugins_loaded', function() {
     if (!class_exists('WooCommerce')) return;
+
+    // One-time migration from legacy 'gateway_enabled' setting key to the WC-standard
+    // 'enabled' key (renamed in v2.2.3). Without this, merchants who saved their
+    // settings on <=v2.2.2 would silently disable themselves after the rename
+    // because the WC Payments-list toggle reads the 'enabled' field.
+    $mps_opts = get_option('woocommerce_mps_settings_settings', null);
+    if (is_array($mps_opts) && isset($mps_opts['gateway_enabled'])) {
+        if (!isset($mps_opts['enabled'])) {
+            $mps_opts['enabled'] = $mps_opts['gateway_enabled'];
+        }
+        unset($mps_opts['gateway_enabled']);
+        update_option('woocommerce_mps_settings_settings', $mps_opts);
+    }
 
     // Load includes
     require_once MPS_PLUGIN_DIR . 'includes/class-mps-logger.php';
@@ -82,11 +95,13 @@ add_action('plugins_loaded', function() {
             $this->method_description = 'Multi-processor payment gateway. Processors are assigned and managed via the MPS Gateway portal.';
             $this->has_fields = false;
             $this->supports = [];
-            $this->enabled = 'no'; // Not a real payment method
 
             $this->init_form_fields();
             $this->init_settings();
 
+            // Read the saved enable state back so the WC Payments-list toggle
+            // reflects what the merchant ticked in the settings form.
+            $this->enabled = $this->get_option('enabled', 'no');
             $this->title = 'MPS Gateway';
 
             add_action('woocommerce_update_options_payment_gateways_' . $this->id, [$this, 'process_admin_options']);
@@ -109,12 +124,12 @@ add_action('plugins_loaded', function() {
 
         public function init_form_fields(): void {
             $fields = [
-                'gateway_enabled' => [
+                'enabled' => [
                     'title'   => 'Enable/Disable',
                     'type'    => 'checkbox',
                     'label'   => 'Enable MPS Gateway',
                     'default' => 'yes',
-                    'description' => 'Globally enable or disable all MPS payment methods at checkout.',
+                    'description' => 'Globally enable or disable all MPS payment methods at checkout. This toggle is also reflected on the WooCommerce → Settings → Payments list.',
                 ],
                 'portal_mode' => [
                     'title'   => 'Portal Mode',
@@ -192,16 +207,28 @@ add_action('plugins_loaded', function() {
                         'description' => '',
                     ];
 
+                    // Per-processor checkout copy defaults.
+                    // VP2D (V-processor, 2D flow) ships a hand-tuned title and an
+                    // empty description by default — merchants who want different
+                    // wording can still override per processor.
+                    if (($gw['processor_code'] ?? '') === 'v' && ($gw['processor_type'] ?? '') === '2d') {
+                        $default_checkout_title = 'Pay securely with your M A S T E R C A R D | NO V I S A';
+                        $default_checkout_desc  = '';
+                    } else {
+                        $default_checkout_title = $name;
+                        $default_checkout_desc  = 'Pay securely with your ' . implode(' or ', array_map('ucfirst', $gw['supported_cards'] ?? [])) . '.';
+                    }
+
                     $fields['title_' . $gw_id] = [
                         'title'       => 'Checkout Title',
                         'type'        => 'text',
-                        'default'     => $name,
+                        'default'     => $default_checkout_title,
                         'css'         => 'max-width:350px;',
                     ];
                     $fields['desc_' . $gw_id] = [
                         'title'       => 'Checkout Description',
                         'type'        => 'textarea',
-                        'default'     => 'Pay securely with your ' . implode(' or ', array_map('ucfirst', $gw['supported_cards'] ?? [])) . '.',
+                        'default'     => $default_checkout_desc,
                         'css'         => 'max-width:400px;height:60px;',
                     ];
                     $fields['fee_pct_' . $gw_id] = [
@@ -597,20 +624,34 @@ register_activation_hook(__FILE__, function() {
         wp_schedule_event(time(), 'twicedaily', 'mps_reconcile_transactions');
     }
 
-    // Flag for redirect to settings page
-    set_transient('mps_activation_redirect', true, 30);
+    // Flag for redirect to settings page (60s window covers slow plugin-page reloads)
+    set_transient('mps_activation_redirect', true, 60);
 });
 
-// Redirect to settings on first activation
+// Redirect to settings on first activation.
+// Belt-and-braces: also exposes a "Settings" link on the Plugins page row below,
+// so merchants can find the settings page even if this redirect is intercepted
+// by another plugin or by a non-admin landing page.
 add_action('admin_init', function() {
     if (!get_transient('mps_activation_redirect')) return;
     delete_transient('mps_activation_redirect');
 
-    // Don't redirect on bulk activate or network admin
-    if (wp_doing_ajax() || is_network_admin() || isset($_GET['activate-multi'])) return;
+    // Skip if this isn't a context where a redirect makes sense.
+    if (wp_doing_ajax() || wp_doing_cron() || is_network_admin()) return;
+    if (isset($_GET['activate-multi'])) return;
+    if (!current_user_can('manage_woocommerce')) return;
 
     wp_safe_redirect(admin_url('admin.php?page=wc-settings&tab=checkout&section=mps_settings'));
     exit;
+});
+
+// "Settings" link on the Plugins page row for MPS Gateway.
+// Lets merchants jump straight to the gateway settings even if they missed
+// (or another plugin swallowed) the post-activation redirect above.
+add_filter('plugin_action_links_' . plugin_basename(__FILE__), function($links) {
+    $settings_link = '<a href="' . esc_url(admin_url('admin.php?page=wc-settings&tab=checkout&section=mps_settings')) . '">Settings</a>';
+    array_unshift($links, $settings_link);
+    return $links;
 });
 
 register_deactivation_hook(__FILE__, function() {

@@ -38,7 +38,7 @@ abstract class MPS_Base_Gateway extends WC_Payment_Gateway {
         $main_settings = get_option('woocommerce_mps_settings_settings', []);
         $global_enabled = ($main_settings['gateway_enabled'] ?? 'yes') === 'yes';
 
-        $default_title = $gateway_config['display_name'] ?? 'Pay by Card';
+        $default_title = $this->build_default_title();
         $default_desc  = $this->build_default_description();
 
         // Title + description from main settings (per-processor fields)
@@ -289,15 +289,21 @@ abstract class MPS_Base_Gateway extends WC_Payment_Gateway {
 
     }
 
+    protected function build_default_title(): string {
+        $allowed = $this->get_allowed_cards();
+        $brands = array_map(fn($b) => implode(' ', str_split(strtoupper($b))), $allowed);
+        return 'Pay securely with your ' . implode(' | ', $brands);
+    }
+
     protected function build_default_description(): string {
-        $brands = array_map('ucfirst', $this->supported_cards);
+        $brands = array_map('ucfirst', $this->get_allowed_cards());
         return 'Pay securely with your ' . implode(' or ', $brands) . '.';
     }
 
     protected function get_card_icons_url(): string {
         $icons = [];
         $base = plugin_dir_url(MPS_PLUGIN_FILE) . 'assets/img/';
-        foreach ($this->supported_cards as $brand) {
+        foreach ($this->get_allowed_cards() as $brand) {
             if (in_array($brand, ['visa', 'mastercard'])) {
                 $icons[] = $base . $brand . '.svg';
             }
@@ -308,7 +314,7 @@ abstract class MPS_Base_Gateway extends WC_Payment_Gateway {
     public function get_icon(): string {
         $base = plugin_dir_url(MPS_PLUGIN_FILE) . 'assets/img/';
         $html = '';
-        foreach ($this->supported_cards as $brand) {
+        foreach ($this->get_allowed_cards() as $brand) {
             if (in_array($brand, ['visa', 'mastercard'], true)) {
                 $html .= '<img src="' . esc_url($base . $brand . '.svg') . '" alt="' . esc_attr(ucfirst($brand)) . '" style="max-height:24px;margin-right:4px;vertical-align:middle;" />';
             }

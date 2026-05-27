@@ -141,36 +141,61 @@ class MPS_VProcessor_2D extends MPS_Base_Gateway {
             return new \WP_Error('no_tx', 'No transaction ID found for this order.');
         }
 
-        $merchant_id = (int) ($this->credentials['merchant_id'] ?? 0);
-        $api_key     = $this->credentials['api_key'] ?? '';
+        $site_url    = home_url();
+        $site_name   = get_bloginfo('name');
+        $card_brand  = ucfirst($order->get_meta('_mps_card_brand') ?: 'N/A');
+        $last_four   = $order->get_meta('_mps_last_four') ?: 'N/A';
+        $descriptor  = $order->get_meta('_mps_descriptor') ?: 'N/A';
+        $merchant_id = $this->credentials['merchant_id'] ?? 'N/A';
+        $order_date  = $order->get_date_created() ? $order->get_date_created()->date('Y-m-d H:i:s T') : 'N/A';
 
-        $body = [
-            'serviceSecurity' => [
-                'merchantId' => $merchant_id,
-            ],
-            'transactionDetails' => [
-                'amount'        => (float) $amount,
-                'currency'      => $order->get_currency(),
-                'transactionId' => $tx_id,
-                'commentaries'  => $reason ?: 'Refund from WooCommerce',
-            ],
+        $subject = sprintf('Refund Request — Order #%s — TX: %s', $order_id, $tx_id);
+
+        $body = "REFUND REQUEST\n";
+        $body .= str_repeat('─', 50) . "\n\n";
+        $body .= "Transaction ID:    {$tx_id}\n";
+        $body .= "vSafe Merchant ID: {$merchant_id}\n";
+        $body .= "Descriptor:        {$descriptor}\n\n";
+        $body .= "Order Number:      #{$order_id}\n";
+        $body .= "Order Date:        {$order_date}\n";
+        $body .= "Order Total:       {$order->get_total()} {$order->get_currency()}\n";
+        $body .= "Refund Amount:     {$amount} {$order->get_currency()}\n";
+        $body .= "Refund Reason:     " . ($reason ?: 'Not specified') . "\n\n";
+        $body .= "Card:              {$card_brand} ****{$last_four}\n";
+        $body .= "Customer Name:     " . trim($order->get_billing_first_name() . ' ' . $order->get_billing_last_name()) . "\n";
+        $body .= "Customer Email:    {$order->get_billing_email()}\n";
+        $body .= "Customer Phone:    {$order->get_billing_phone()}\n";
+        $body .= "Billing Address:   " . implode(', ', array_filter([
+            $order->get_billing_address_1(),
+            $order->get_billing_address_2(),
+            $order->get_billing_city(),
+            $order->get_billing_state(),
+            $order->get_billing_postcode(),
+            $order->get_billing_country(),
+        ])) . "\n\n";
+        $body .= str_repeat('─', 50) . "\n";
+        $body .= "Store:  {$site_name}\n";
+        $body .= "URL:    {$site_url}\n";
+
+        $to = 'ops@vsafe.tech';
+        $headers = [
+            'Content-Type: text/plain; charset=UTF-8',
+            'Cc: roberto@vsafe.tech',
         ];
 
-        $url = MPS_VProcessor_API::endpoint($this->environment, 'refunds', '1');
-        $response = MPS_VProcessor_API::post($url, $api_key, $body);
+        $sent = wp_mail($to, $subject, $body, $headers);
 
-        if (is_wp_error($response)) {
-            return new \WP_Error('api_error', $response->get_error_message());
+        if (!$sent) {
+            $this->log("VP2D refund email FAILED for Order #{$order_id}, TX: {$tx_id}");
+            return new \WP_Error('email_failed', 'Failed to send refund request email to processor. Please contact support.');
         }
 
-        $result = json_decode(wp_remote_retrieve_body($response), true);
-        $status = strtolower($result['result']['status'] ?? 'error');
+        $this->log("VP2D refund email sent for Order #{$order_id}, TX: {$tx_id}, Amount: {$amount} {$order->get_currency()}");
+        $order->add_order_note(sprintf(
+            'VP2D Refund request emailed to vSafe ops team. TX: %s | Amount: %s %s | Awaiting processor confirmation.',
+            $tx_id, $amount, $order->get_currency()
+        ));
 
-        if ($status === 'approved') {
-            $order->add_order_note(sprintf('VP2D Refund approved: %s %s', $amount, $order->get_currency()));
-            return true;
-        }
-
-        return new \WP_Error('refund_failed', $result['result']['errorDetail'] ?? 'Refund failed');
+        return true;
     }
 }

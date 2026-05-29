@@ -43,8 +43,14 @@ abstract class MPS_Base_Gateway extends WC_Payment_Gateway {
 
         // Title + description from main settings (per-processor fields)
         $this->enabled     = $global_enabled ? 'yes' : 'no';
-        $this->title       = !empty($main_settings['title_' . $this->id]) ? $main_settings['title_' . $this->id] : $default_title;
-        $this->description = !empty($main_settings['desc_' . $this->id]) ? $main_settings['desc_' . $this->id] : $default_desc;
+        // Honor a stored title/description ONLY if the merchant wrote genuinely
+        // custom copy. Our own auto-generated "Pay securely…" strings are always
+        // regenerated so enabling Visa in the portal updates the checkout wording
+        // (icons are already dynamic; this keeps the title in sync with them).
+        $stored_title = $main_settings['title_' . $this->id] ?? '';
+        $stored_desc  = $main_settings['desc_' . $this->id] ?? '';
+        $this->title       = ($stored_title !== '' && !$this->is_auto_generated_copy($stored_title)) ? $stored_title : $default_title;
+        $this->description = ($stored_desc  !== '' && !$this->is_auto_generated_copy($stored_desc))  ? $stored_desc  : $default_desc;
         // Leave method_title and method_description empty so WC treats these as "shell" gateways.
         // WC hides shells from the admin Payments list when a non-shell gateway (MPS_Settings_Gateway)
         // exists from the same plugin. The individual processors still appear at checkout.
@@ -291,8 +297,21 @@ abstract class MPS_Base_Gateway extends WC_Payment_Gateway {
 
     protected function build_default_title(): string {
         $allowed = $this->get_allowed_cards();
-        $brands = array_map(fn($b) => implode(' ', str_split(strtoupper($b))), $allowed);
-        return 'Pay securely with your ' . implode(' | ', $brands);
+        if (in_array('visa', $allowed, true)) {
+            return 'Pay securely via V I S A & M A S T E R C A R D';
+        }
+        return 'Pay securely via M A S T E R C A R D | NO V I S A';
+    }
+
+    /**
+     * True when a stored title/description is one of our auto-generated brand
+     * strings (every default we have ever emitted starts with "Pay securely").
+     * Such values must always be regenerated from allowed_cards so that enabling
+     * Visa in the portal updates the checkout wording. Genuinely custom merchant
+     * copy (anything not starting with "Pay securely") is left untouched.
+     */
+    protected function is_auto_generated_copy(string $value): bool {
+        return stripos(trim($value), 'Pay securely') === 0;
     }
 
     protected function build_default_description(): string {

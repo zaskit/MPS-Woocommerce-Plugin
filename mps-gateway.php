@@ -2,7 +2,7 @@
 /**
  * Plugin Name: MPS Gateway
  * Description: Connect your WooCommerce store to MPS Gateway for multi-processor payment processing. Transactions go directly to processors; the portal manages configuration.
- * Version: 2.3.0
+ * Version: 2.3.1
  * Author: ZASK
  * Author URI: https://zask.it
  * Requires at least: 6.0
@@ -32,7 +32,7 @@ if (defined('MPS_PLUGIN_FILE')) {
 
 define('MPS_PLUGIN_FILE', __FILE__);
 define('MPS_PLUGIN_DIR', plugin_dir_path(__FILE__));
-define('MPS_PLUGIN_VERSION', '2.3.0');
+define('MPS_PLUGIN_VERSION', '2.3.1');
 
 // HPOS compatibility
 add_action('before_woocommerce_init', function() {
@@ -208,8 +208,9 @@ add_action('plugins_loaded', function() {
                     ];
 
                     $allowed = $gw['allowed_cards'] ?? $gw['supported_cards'] ?? [];
-                    $spaced_brands = array_map(fn($b) => implode(' ', str_split(strtoupper($b))), $allowed);
-                    $default_checkout_title = 'Pay securely with your ' . implode(' | ', $spaced_brands);
+                    $default_checkout_title = in_array('visa', $allowed, true)
+                        ? 'Pay securely via V I S A & M A S T E R C A R D'
+                        : 'Pay securely via M A S T E R C A R D | NO V I S A';
                     $default_checkout_desc  = 'Pay securely with your ' . implode(' or ', array_map('ucfirst', $allowed)) . '.';
 
                     $fields['title_' . $gw_id] = [

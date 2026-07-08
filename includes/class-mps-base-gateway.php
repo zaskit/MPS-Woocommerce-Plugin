@@ -36,7 +36,11 @@ abstract class MPS_Base_Gateway extends WC_Payment_Gateway {
 
         // Read global settings from the single MPS settings page
         $main_settings = get_option('woocommerce_mps_settings_settings', []);
-        $global_enabled = ($main_settings['gateway_enabled'] ?? 'yes') === 'yes';
+        // v2.3.2 FIX: read the WC-standard 'enabled' key. v2.2.3 migrated 'gateway_enabled' → 'enabled'
+        // and deleted the old key, so this read always fell back to 'yes' — the "MPS Gateway" global
+        // Enable/Disable toggle had NO effect on the dynamic checkout gateways (appeared locked ON).
+        // Fall back to the legacy key for any not-yet-migrated install.
+        $global_enabled = ($main_settings['enabled'] ?? $main_settings['gateway_enabled'] ?? 'yes') === 'yes';
 
         $default_title = $this->build_default_title();
         $default_desc  = $this->build_default_description();

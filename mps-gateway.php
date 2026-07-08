@@ -2,7 +2,7 @@
 /**
  * Plugin Name: MPS Gateway
  * Description: Connect your WooCommerce store to MPS Gateway for multi-processor payment processing. Transactions go directly to processors; the portal manages configuration.
- * Version: 2.3.1
+ * Version: 2.3.2
  * Author: ZASK
  * Author URI: https://zask.it
  * Requires at least: 6.0
@@ -32,7 +32,7 @@ if (defined('MPS_PLUGIN_FILE')) {
 
 define('MPS_PLUGIN_FILE', __FILE__);
 define('MPS_PLUGIN_DIR', plugin_dir_path(__FILE__));
-define('MPS_PLUGIN_VERSION', '2.3.1');
+define('MPS_PLUGIN_VERSION', '2.3.2');
 
 // HPOS compatibility
 add_action('before_woocommerce_init', function() {
@@ -87,6 +87,15 @@ add_action('plugins_loaded', function() {
         $gateways[] = 'MPS_Settings_Gateway';
         return $gateways;
     });
+
+    // v2.3.2: make the single visible "MPS Gateway" (mps_settings) row control WHERE the MPS methods
+    // appear at checkout. The real per-processor gateways are hidden "shell" rows, so the merchant can
+    // only drag the "MPS Gateway" row — cluster the dynamic MPS methods at that row's saved position,
+    // for BOTH classic and Block checkout. Also fixes the Block checkout not reflecting the admin
+    // gateway order generally (core builds its sort order from an unstable internal list).
+    add_filter('woocommerce_available_payment_gateways', 'mps_reorder_available_gateways', 20);
+    add_action('woocommerce_blocks_checkout_enqueue_data', 'mps_set_block_sort_order', 1);
+    add_action('woocommerce_blocks_cart_enqueue_data', 'mps_set_block_sort_order', 1);
 
     class MPS_Settings_Gateway extends WC_Payment_Gateway {
         public function __construct() {
@@ -794,3 +803,53 @@ add_filter('upgrader_source_selection', function($source, $remote_source, $upgra
 
     return $source;
 }, 10, 4);
+
+/**
+ * v2.3.2 — Gateway ordering helpers (payment-provider sorting).
+ *
+ * The per-processor MPS gateways are hidden "shell" rows in the admin Payments list, so the merchant
+ * can only drag the single visible "MPS Gateway" (mps_settings) row. These helpers make that row's
+ * saved position govern where the MPS methods appear at checkout, and make the Block checkout honor
+ * the admin drag order (which core does not reliably do).
+ */
+function mps_sorted_gateway_ids(array $ids): array {
+    $opt     = (array) get_option('woocommerce_gateway_order', []);
+    $mps_pos = (isset($opt['mps_settings']) && is_numeric($opt['mps_settings'])) ? (float) $opt['mps_settings'] : (float) PHP_INT_MAX;
+    $rows = [];
+    foreach (array_values($ids) as $i => $id) {
+        $is_mps_dynamic = (strpos($id, 'mps_') === 0 && $id !== 'mps_settings');
+        if ($is_mps_dynamic) {
+            $pos = $mps_pos + ($i * 0.0001);                         // cluster at the "MPS Gateway" slot
+        } else {
+            $pos = (isset($opt[$id]) && is_numeric($opt[$id])) ? (float) $opt[$id] : (float) PHP_INT_MAX - 1;
+        }
+        $rows[] = [$id, $pos, $i];
+    }
+    usort($rows, function ($a, $b) { return $a[1] === $b[1] ? ($a[2] <=> $b[2]) : ($a[1] <=> $b[1]); });
+    return array_map(function ($r) { return $r[0]; }, $rows);
+}
+
+/** Classic checkout: reorder the available-gateways array by the admin order. */
+function mps_reorder_available_gateways($gateways) {
+    if (!is_array($gateways) || count($gateways) < 2) return $gateways;
+    $ordered = [];
+    foreach (mps_sorted_gateway_ids(array_keys($gateways)) as $id) {
+        if (isset($gateways[$id])) $ordered[$id] = $gateways[$id];
+    }
+    return $ordered ?: $gateways;
+}
+
+/** Block checkout: set paymentMethodSortOrder (core guards with !exists, so first writer wins). */
+function mps_set_block_sort_order() {
+    if (!class_exists('\Automattic\WooCommerce\Blocks\Package') || !function_exists('WC')) return;
+    try {
+        $registry = \Automattic\WooCommerce\Blocks\Package::container()
+            ->get(\Automattic\WooCommerce\Blocks\Assets\AssetDataRegistry::class);
+    } catch (\Throwable $e) {
+        return; // never break checkout
+    }
+    if (!$registry || $registry->exists('paymentMethodSortOrder')) return;
+    $pg = (function_exists('WC') && WC()->payment_gateways) ? WC()->payment_gateways->payment_gateways() : [];
+    $enabled = array_filter($pg, function ($g) { return filter_var($g->enabled, FILTER_VALIDATE_BOOLEAN); });
+    $registry->add('paymentMethodSortOrder', array_values(mps_sorted_gateway_ids(array_keys($enabled))));
+}

@@ -86,6 +86,13 @@ abstract class MPS_Base_Gateway extends WC_Payment_Gateway {
      * Matches Merchant Payment Gateway plugin design.
      */
     public function payment_fields(): void {
+        // v2.3.4: echo the gateway description under the title. Classic checkout renders ONLY
+        // payment_fields() for a has_fields gateway (WC's default payment_fields — which prints the
+        // description — is overridden here for the card form), so without this the description never
+        // showed on classic checkout (e.g. SciLife/Elementor). Block checkout gets it separately.
+        if ($this->description) {
+            echo wpautop( wptexturize( $this->description ) );
+        }
         $prefix = esc_attr($this->id);
         $allowed = $this->get_allowed_cards();
         $mc_only = (count($allowed) === 1 && in_array('mastercard', $allowed));

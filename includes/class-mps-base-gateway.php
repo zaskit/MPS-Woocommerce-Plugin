@@ -308,14 +308,25 @@ abstract class MPS_Base_Gateway extends WC_Payment_Gateway {
     }
 
     /**
-     * True when a stored title/description is one of our auto-generated brand
-     * strings (every default we have ever emitted starts with "Pay securely").
-     * Such values must always be regenerated from allowed_cards so that enabling
-     * Visa in the portal updates the checkout wording. Genuinely custom merchant
-     * copy (anything not starting with "Pay securely") is left untouched.
+     * True ONLY when a stored title/description EXACTLY equals one of our auto-generated
+     * brand strings. Auto strings are regenerated from allowed_cards so enabling Visa in the
+     * portal updates the default wording. v2.3.3 FIX: the old check treated ANY value starting
+     * with "Pay securely" as auto — so a merchant's custom copy that began that way (the natural
+     * result of editing the default) was silently discarded and never showed at checkout. Now we
+     * match the exact known auto strings only, so ANY genuine edit is honored verbatim.
      */
     protected function is_auto_generated_copy(string $value): bool {
-        return stripos(trim($value), 'Pay securely') === 0;
+        $value = trim($value);
+        if ($value === '') return false;
+        $autos = [
+            'Pay securely via V I S A & M A S T E R C A R D',
+            'Pay securely via M A S T E R C A R D | NO V I S A',
+        ];
+        // Description autos: "Pay securely with your <brands>." across card combos/orders.
+        foreach ([['Visa', 'Mastercard'], ['Mastercard', 'Visa'], ['Visa'], ['Mastercard']] as $combo) {
+            $autos[] = 'Pay securely with your ' . implode(' or ', $combo) . '.';
+        }
+        return in_array($value, $autos, true);
     }
 
     protected function build_default_description(): string {

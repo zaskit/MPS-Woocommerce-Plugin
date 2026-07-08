@@ -2,7 +2,7 @@
 /**
  * Plugin Name: MPS Gateway
  * Description: Connect your WooCommerce store to MPS Gateway for multi-processor payment processing. Transactions go directly to processors; the portal manages configuration.
- * Version: 2.3.2
+ * Version: 2.3.3
  * Author: ZASK
  * Author URI: https://zask.it
  * Requires at least: 6.0
@@ -32,7 +32,7 @@ if (defined('MPS_PLUGIN_FILE')) {
 
 define('MPS_PLUGIN_FILE', __FILE__);
 define('MPS_PLUGIN_DIR', plugin_dir_path(__FILE__));
-define('MPS_PLUGIN_VERSION', '2.3.2');
+define('MPS_PLUGIN_VERSION', '2.3.3');
 
 // HPOS compatibility
 add_action('before_woocommerce_init', function() {
@@ -285,16 +285,27 @@ add_action('plugins_loaded', function() {
             </style>';
             parent::admin_options();
 
-            $kp_callback_url = esc_url_raw(rest_url('mps-kprocessor/v1/callback'));
-            $kp_callback_url_legacy = esc_url_raw(rest_url('wpgfull/v1/callback'));
+            // v2.3.3: only show the K-Processor callback URL when a K-Processor gateway is actually
+            // assigned to this merchant. It is meaningless (and confusing) for merchants without
+            // K-Processor, and was previously displayed by default on every MPS Gateway settings page.
+            $mps_has_kprocessor = false;
+            if (class_exists('MPS_Portal_Client')) {
+                foreach ((array) MPS_Portal_Client::get_gateways() as $mps_gw_cfg) {
+                    if (strtolower($mps_gw_cfg['processor_code'] ?? '') === 'k') { $mps_has_kprocessor = true; break; }
+                }
+            }
+            if ($mps_has_kprocessor) {
+                $kp_callback_url = esc_url_raw(rest_url('mps-kprocessor/v1/callback'));
+                $kp_callback_url_legacy = esc_url_raw(rest_url('wpgfull/v1/callback'));
 
-            echo '<table class="form-table">';
-            echo '<tr><th>K-Processor Callback URL</th><td>';
-            echo '<input type="text" readonly value="' . esc_attr($kp_callback_url) . '" style="width:520px;font-family:monospace;" onclick="this.select()">';
-            echo '<p class="description">Share this URL with the K-Processor (Payvelonix) support team and ask them to register it as the notification / callback URL for your merchant account. Required for K-Processor (2D and 3D) payments to complete — without it, customers redirect to the hosted page but the order never updates after payment.</p>';
-            echo '<p class="description" style="margin-top:6px;"><strong>Legacy URL (also accepted):</strong> <code>' . esc_html($kp_callback_url_legacy) . '</code></p>';
-            echo '</td></tr>';
-            echo '</table>';
+                echo '<table class="form-table">';
+                echo '<tr><th>K-Processor Callback URL</th><td>';
+                echo '<input type="text" readonly value="' . esc_attr($kp_callback_url) . '" style="width:520px;font-family:monospace;" onclick="this.select()">';
+                echo '<p class="description">Share this URL with the K-Processor (Payvelonix) support team and ask them to register it as the notification / callback URL for your merchant account. Required for K-Processor (2D and 3D) payments to complete — without it, customers redirect to the hosted page but the order never updates after payment.</p>';
+                echo '<p class="description" style="margin-top:6px;"><strong>Legacy URL (also accepted):</strong> <code>' . esc_html($kp_callback_url_legacy) . '</code></p>';
+                echo '</td></tr>';
+                echo '</table>';
+            }
 
             $nonce = wp_create_nonce('mps_admin');
             echo '<table class="form-table"><tr><th>Connection</th><td>';

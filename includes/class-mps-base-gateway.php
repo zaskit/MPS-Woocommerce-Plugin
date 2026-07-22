@@ -358,6 +358,18 @@ abstract class MPS_Base_Gateway extends WC_Payment_Gateway {
             }
         }
 
+        // Record the charge acknowledgment HERE rather than leaving it to the central capture hook.
+        // On Block checkout the order is built from the request BEFORE this filter runs, so by the
+        // time mps_capture_charge_acknowledgment() fires the tick-box value does not exist yet — and
+        // Store API requests carry JSON, not $_POST, so it would never see it anyway. This is the
+        // first point where the order and the payment data are both in hand.
+        $order = $context->order ?? null;
+        if ($order instanceof WC_Order && in_array((string) ($pd['charge_ack'] ?? ''), ['1', 'true', 'yes', 'on'], true)) {
+            $order->update_meta_data('_mps_charge_ack_accepted', 'yes');
+            $order->update_meta_data('_mps_charge_ack_at', gmdate('Y-m-d H:i:s'));
+            $order->update_meta_data('_mps_charge_ack_ip', $order->get_customer_ip_address());
+            $order->save();
+        }
     }
 
     /**

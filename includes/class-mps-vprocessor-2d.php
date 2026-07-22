@@ -196,7 +196,7 @@ class MPS_VProcessor_2D extends MPS_Base_Gateway {
 
         $this->log("VP2D refund email sent for Order #{$order_id}, TX: {$tx_id}, Amount: {$amount} {$order->get_currency()}");
         $order->add_order_note(sprintf(
-            'VP2D Refund request emailed to vSafe ops team. TX: %s | Amount: %s %s | Awaiting processor confirmation.',
+            'V-Processor refund request sent to the processor support team. TX: %s | Amount: %s %s | Awaiting processor confirmation.',
             $tx_id, $amount, $order->get_currency()
         ));
 

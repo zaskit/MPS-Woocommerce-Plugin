@@ -143,3 +143,48 @@
         font-size: 16px; /* Prevent iOS zoom */
     }
 }
+
+/* --- Decline notice + charge acknowledgment (v2.5.0, client 2026-07-22) --- */
+
+/* Shown directly under the card fields after a declined attempt. Red = this card must not be
+   retried; amber = a different card may work. Deliberately loud — the whole point is that the
+   customer notices it and stops retrying the same card. */
+.mps-decline-notice {
+    margin: 14px 0 4px;
+    padding: 11px 13px;
+    border-radius: 8px;
+    font-size: 14px;
+    line-height: 1.45;
+    font-weight: 600;
+    border: 1px solid transparent;
+}
+.mps-decline-notice.mps-decline-final {
+    background: #fef2f2;
+    border-color: #fecaca;
+    color: #b91c1c;
+}
+.mps-decline-notice.mps-decline-retry {
+    background: #fffbeb;
+    border-color: #fde68a;
+    color: #b45309;
+}
+
+/* Optional cardholder charge acknowledgment tick-box. */
+.mps-ack-field { margin: 14px 0 2px; }
+.mps-ack-label {
+    display: flex;
+    align-items: flex-start;
+    gap: 9px;
+    cursor: pointer;
+    font-size: 13px;
+    line-height: 1.5;
+    color: #4b5563;
+}
+.mps-ack-checkbox {
+    margin: 2px 0 0;
+    width: 16px;
+    height: 16px;
+    flex: 0 0 auto;
+    cursor: pointer;
+}
+.mps-ack-text strong { color: #111827; }

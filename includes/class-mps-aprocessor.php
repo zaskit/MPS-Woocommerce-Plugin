@@ -22,13 +22,12 @@ class MPS_AProcessor extends MPS_Base_Gateway {
         $this->has_fields = false; // redirect to cloak — no card form here
     }
 
-    /** A-Processor accepts all major cards via the cloak page — keep the label generic. */
-    public function build_default_title(): string {
-        return 'Pay securely with Credit/Debit Card';
-    }
-
+    /**
+     * A-Processor keeps the shared "Pay with Card" title (client 2026-07-22) but says up front that
+     * the customer leaves the site, because this one redirects to the cloak page.
+     */
     public function build_default_description(): string {
-        return 'You will be redirected to a secure page to complete your card payment.';
+        return 'Pay securely with your credit or debit card. You will be redirected to a secure page to complete your payment.';
     }
 
     /** Description only (no card form). */

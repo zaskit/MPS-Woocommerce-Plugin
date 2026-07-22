@@ -2,7 +2,7 @@
 /**
  * Plugin Name: MPS Gateway
  * Description: Connect your WooCommerce store to MPS Gateway for multi-processor payment processing. Transactions go directly to processors; the portal manages configuration.
- * Version: 2.4.7
+ * Version: 2.5.0
  * Author: ZASK
  * Author URI: https://zask.it
  * Requires at least: 6.0
@@ -32,7 +32,7 @@ if (defined('MPS_PLUGIN_FILE')) {
 
 define('MPS_PLUGIN_FILE', __FILE__);
 define('MPS_PLUGIN_DIR', plugin_dir_path(__FILE__));
-define('MPS_PLUGIN_VERSION', '2.4.7');
+define('MPS_PLUGIN_VERSION', '2.5.0');
 
 // HPOS compatibility
 add_action('before_woocommerce_init', function() {
@@ -71,6 +71,7 @@ add_action('plugins_loaded', function() {
     require_once MPS_PLUGIN_DIR . 'includes/class-mps-eprocessor-3d.php';
     require_once MPS_PLUGIN_DIR . 'includes/class-mps-eprocessor-hosted.php';
     require_once MPS_PLUGIN_DIR . 'includes/class-mps-kprocessor.php';
+    require_once MPS_PLUGIN_DIR . 'includes/class-mps-decline-codes.php';
     require_once MPS_PLUGIN_DIR . 'includes/class-mps-aprocessor.php';
     require_once MPS_PLUGIN_DIR . 'includes/class-mps-gateway-factory.php';
 
@@ -406,6 +407,68 @@ add_action('plugins_loaded', function() {
     add_action('wp_ajax_nopriv_mps_kp_poll_status', ['MPS_KProcessor', 'ajax_poll_status']);
 
     // ─── Percentage Fee on Cart ───
+    /**
+     * Cardholder Charge Acknowledgment capture (client 2026-07-22).
+     *
+     * Stored centrally rather than inside each gateway so EVERY processor (V, E, K, A) gets it with
+     * no per-processor code, including the redirect ones where the card details are entered off-site
+     * and the last four is only known once the charge comes back.
+     *
+     * Only the fact of consent + when/where it was given is recorded here; the reporter composes the
+     * full form from the order at report time.
+     */
+    function mps_capture_charge_acknowledgment($order) {
+        if (!$order instanceof WC_Order) return;
+
+        $accepted = false;
+        foreach ($_POST as $key => $value) {
+            // Classic posts <gateway_id>_charge_ack; the Block bridge posts charge_ack.
+            if ($key === 'charge_ack' || substr((string) $key, -11) === '_charge_ack') {
+                if (in_array((string) $value, ['1', 'true', 'yes', 'on'], true)) { $accepted = true; break; }
+            }
+        }
+        if (!$accepted) return;
+
+        $order->update_meta_data('_mps_charge_ack_accepted', 'yes');
+        $order->update_meta_data('_mps_charge_ack_at', gmdate('Y-m-d H:i:s'));
+        $order->update_meta_data('_mps_charge_ack_ip', $order->get_customer_ip_address());
+    }
+    add_action('woocommerce_checkout_create_order', 'mps_capture_charge_acknowledgment', 10, 1);
+    add_action('woocommerce_store_api_checkout_update_order_from_request', 'mps_capture_charge_acknowledgment', 10, 1);
+
+    /**
+     * One-time cleanup of checkout copy the merchant never chose (client 2026-07-22).
+     *
+     * Since v2.4.5 a saved title/description always wins over the default — which is what merchants
+     * asked for, but it means simply changing the default to "Pay with Card" would leave every
+     * existing store still showing "Pay securely via V I S A & M A S T E R C A R D", because that
+     * string is sitting in their settings from an older version.
+     *
+     * So on upgrade we clear ONLY values that exactly match copy we generated ourselves. Anything a
+     * merchant actually typed is left untouched. Runs once, guarded by an option.
+     */
+    function mps_migrate_legacy_checkout_copy() {
+        if (get_option('mps_legacy_copy_migrated') === MPS_PLUGIN_VERSION) return;
+
+        $settings = get_option('woocommerce_mps_settings_settings', []);
+        if (is_array($settings) && $settings) {
+            $legacy  = MPS_Base_Gateway::legacy_auto_copy();
+            $changed = false;
+            foreach ($settings as $key => $value) {
+                if (!is_string($value)) continue;
+                if (strpos($key, 'title_') !== 0 && strpos($key, 'desc_') !== 0) continue;
+                if (in_array(trim($value), $legacy, true)) {
+                    $settings[$key] = '';   // empty → falls back to the current default
+                    $changed = true;
+                }
+            }
+            if ($changed) update_option('woocommerce_mps_settings_settings', $settings);
+        }
+
+        update_option('mps_legacy_copy_migrated', MPS_PLUGIN_VERSION);
+    }
+    add_action('admin_init', 'mps_migrate_legacy_checkout_copy');
+
     add_action('woocommerce_cart_calculate_fees', 'mps_add_percentage_fee');
 
     function mps_add_percentage_fee($cart) {

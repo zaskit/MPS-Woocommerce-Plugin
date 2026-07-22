@@ -44,6 +44,9 @@ class MPS_Blocks_Integration extends AbstractPaymentMethodType {
             'description'  => $this->gateway->description ?? '',
             'supports'     => ['products'],
             'icons'        => $this->get_icons(),
+            // Optional charge-acknowledgment consent line (client 2026-07-22). Empty string hides
+            // the tick-box entirely; <strong> around the descriptor is intentional.
+            'ack_text'     => $this->charge_acknowledgment_text(),
             'supports_3ds' => $this->gateway->supports_3ds,
             'has_fields'   => $this->gateway->has_fields,
         ];
@@ -64,5 +67,19 @@ class MPS_Blocks_Integration extends AbstractPaymentMethodType {
     private function get_icons(): array {
         // Checkout intentionally shows title + description only — no card-brand icons.
         return [];
+    }
+
+    /** Consent wording for the Block checkout tick-box — mirrors the classic markup. */
+    private function charge_acknowledgment_text(): string {
+        $descriptor = trim((string) ($this->gateway->portal_descriptor ?? ''));
+        if ($descriptor !== '') {
+            return sprintf(
+                /* translators: %s: billing descriptor shown on the cardholder's statement */
+                esc_html__('I authorise this charge and confirm my details may be used for a charge acknowledgment. This will appear on my statement as %s.', 'mps-gateway'),
+                '<strong>' . esc_html($descriptor) . '</strong>'
+            );
+        }
+
+        return esc_html__('I authorise this charge and confirm my details may be used for a charge acknowledgment.', 'mps-gateway');
     }
 }

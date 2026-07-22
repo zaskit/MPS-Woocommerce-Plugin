@@ -52,6 +52,34 @@
             var onPaymentSetup = eventRegistration.onPaymentSetup || eventRegistration.onPaymentProcessing;
 
             var stateRef = window.wp.element.useRef({});
+            var declineState = window.wp.element.useState(null);
+            var decline = declineState[0], setDecline = declineState[1];
+            var declineMsg = decline ? decline.message : '';
+            var declineFinal = decline ? !!decline.final : false;
+
+            // Surface the processor's decline classification under the card fields.
+            window.wp.element.useEffect(function(){
+                var onFail = eventRegistration.onCheckoutFail || eventRegistration.onCheckoutAfterProcessingWithError;
+                if(!onFail) return;
+                var unsub = onFail(function(payload){
+                    var msg = '';
+                    try {
+                        msg = (payload && payload.processingResponse && payload.processingResponse.paymentDetails
+                               && payload.processingResponse.paymentDetails.mps_decline_message) || '';
+                        if(!msg && payload && payload.processingResponse && payload.processingResponse.paymentDetails){
+                            msg = payload.processingResponse.paymentDetails.errorMessage || '';
+                        }
+                    } catch(e){}
+                    if(msg){
+                        setDecline({
+                            message: msg,
+                            final: msg.indexOf('do not retry') !== -1
+                        });
+                    }
+                    return true;
+                });
+                return unsub;
+            },[eventRegistration]);
 
             window.wp.element.useEffect(function(){
                 if(!onPaymentSetup) return;
@@ -126,6 +154,34 @@
 
             // Billing address fields removed — uses WC checkout billing details
             } // end hasFields
+
+            // Decline message from the previous attempt, directly under the card fields
+            // (client 2026-07-22). Block checkout does not reload, so we capture the failure via
+            // onCheckoutFail and re-render here rather than relying on the notice banner.
+            if(declineMsg){
+                elements.push(createElement('div', {
+                    key:'decline',
+                    className: 'mps-decline-notice ' + (declineFinal ? 'mps-decline-final' : 'mps-decline-retry'),
+                    role:'alert'
+                }, declineMsg));
+            }
+
+            // Optional Cardholder Charge Acknowledgment — never blocks the order.
+            if(dataVar.ack_text){
+                elements.push(createElement('div', {key:'ack', className:'mps-ack-field'},
+                    createElement('label', {className:'mps-ack-label'},
+                        createElement('input', {
+                            type:'checkbox',
+                            className:'mps-ack-checkbox',
+                            onChange: function(e){ stateRef.current.charge_ack = e.target.checked ? '1' : ''; }
+                        }),
+                        createElement('span', {
+                            className:'mps-ack-text',
+                            dangerouslySetInnerHTML:{ __html: dataVar.ack_text }
+                        })
+                    )
+                ));
+            }
 
             // Secure badge
             elements.push(

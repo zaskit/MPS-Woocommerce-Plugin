@@ -62,8 +62,9 @@ abstract class MPS_Base_Gateway extends WC_Payment_Gateway {
         $this->method_title       = '';
         $this->method_description = '';
 
-        // Default icon
-        $this->icon = $this->get_card_icons_url();
+        // No card-brand icon next to the checkout title (client 2026-07-22) — title and
+        // description only, on both classic and Block checkout.
+        $this->icon = '';
 
         // Blocks checkout: map payment_data to $_POST before process_payment() runs
         add_action('woocommerce_rest_checkout_process_payment_with_context', [$this, 'bridge_block_payment_data'], 10, 2);
@@ -97,6 +98,7 @@ abstract class MPS_Base_Gateway extends WC_Payment_Gateway {
         $prefix = esc_attr($this->id);
         $allowed = $this->get_allowed_cards();
         $mc_only = (count($allowed) === 1 && in_array('mastercard', $allowed));
+        $decline = MPS_Decline_Codes::consume();
         ?>
         <div class="mps-card-form" id="<?php echo $prefix; ?>-form">
             <div class="mps-field">
@@ -118,12 +120,64 @@ abstract class MPS_Base_Gateway extends WC_Payment_Gateway {
                 </div>
             </div>
             <?php // Billing address fields removed — EP3D uses WC checkout billing details ?>
+
+            <?php if ($decline) : ?>
+                <?php /* The last decline, shown RIGHT UNDER the card fields so the customer cannot
+                          miss it (client 2026-07-22). A "do not retry" decline is styled red and
+                          final; a retryable one is amber. */ ?>
+                <div class="mps-decline-notice <?php echo $decline['final'] ? 'mps-decline-final' : 'mps-decline-retry'; ?>" role="alert">
+                    <?php echo esc_html($decline['message']); ?>
+                </div>
+            <?php endif; ?>
+
+            <?php $this->render_charge_acknowledgment_field(); ?>
+
             <div class="mps-secure-badge">
                 <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="#22c55e" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
                 <span>Secured with 256-bit encryption</span>
             </div>
         </div>
         <?php
+    }
+
+    /**
+     * Optional Cardholder Charge Acknowledgment tick-box (client 2026-07-22). When ticked we capture
+     * the cardholder's confirmation that they authorised this charge, and the portal turns it into a
+     * signed PDF the merchant can submit if the charge is ever disputed.
+     *
+     * Optional by design: leaving it unticked must never block the order.
+     */
+    public function render_charge_acknowledgment_field(): void {
+        $prefix = esc_attr($this->id);
+        $descriptor = trim((string) $this->portal_descriptor);
+        ?>
+        <div class="mps-ack-field">
+            <label class="mps-ack-label">
+                <input type="checkbox" name="<?php echo $prefix; ?>_charge_ack" value="1" class="mps-ack-checkbox">
+                <span class="mps-ack-text">
+                    <?php
+                    if ($descriptor !== '') {
+                        printf(
+                            /* translators: %s: the billing descriptor that appears on the statement */
+                            esc_html__('I authorise this charge and confirm my details may be used for a charge acknowledgment. This will appear on my statement as %s.', 'mps-gateway'),
+                            '<strong>' . esc_html($descriptor) . '</strong>'
+                        );
+                    } else {
+                        esc_html_e('I authorise this charge and confirm my details may be used for a charge acknowledgment.', 'mps-gateway');
+                    }
+                    ?>
+                </span>
+            </label>
+        </div>
+        <?php
+    }
+
+    /** Did the customer tick the acknowledgment box? Handles classic and block field names. */
+    public function charge_acknowledgment_accepted(): bool {
+        $key = $this->id . '_charge_ack';
+        $val = $_POST[$key] ?? $_POST['charge_ack'] ?? '';
+
+        return in_array((string) $val, ['1', 'true', 'yes', 'on'], true);
     }
 
     /**
@@ -297,27 +351,53 @@ abstract class MPS_Base_Gateway extends WC_Payment_Gateway {
             'card_number' => $prefix . '_card_number',
             'card_expiry' => $prefix . '_card_expiry',
             'card_cvv'    => $prefix . '_card_cvv',
+            // Charge-acknowledgment tick-box; bridged unprefixed too so the central capture hook
+            // sees it regardless of which gateway rendered the form.
+            'charge_ack'  => $prefix . '_charge_ack',
         ];
 
         foreach ($map as $block_key => $post_key) {
             if (isset($pd[$block_key])) {
                 $_POST[$post_key] = sanitize_text_field($pd[$block_key]);
+                if ($block_key === 'charge_ack') {
+                    $_POST['charge_ack'] = $_POST[$post_key];
+                }
             }
         }
 
     }
 
+    /**
+     * Default checkout copy. Deliberately brand-neutral (client 2026-07-22): the old defaults spelled
+     * out "V I S A & M A S T E R C A R D", which the client wants gone from the title along with the
+     * brand icons. A merchant can still set their own wording — a saved value always wins.
+     */
     public function build_default_title(): string {
-        $allowed = $this->get_allowed_cards();
-        if (in_array('visa', $allowed, true)) {
-            return 'Pay securely via V I S A & M A S T E R C A R D';
-        }
-        return 'Pay securely via M A S T E R C A R D | NO V I S A';
+        return 'Pay with Card';
     }
 
     public function build_default_description(): string {
-        $brands = array_map('ucfirst', $this->get_allowed_cards());
-        return 'Pay securely with your ' . implode(' or ', $brands) . '.';
+        return 'Pay securely with your credit or debit card.';
+    }
+
+    /**
+     * The auto-generated copy we have shipped over time. Used ONCE on upgrade to replace a stored
+     * value the merchant never actually chose (see mps_migrate_legacy_checkout_copy) — a genuine
+     * custom title is never in this list and is left alone.
+     */
+    public static function legacy_auto_copy(): array {
+        $legacy = [
+            'Pay securely via V I S A & M A S T E R C A R D',
+            'Pay securely via M A S T E R C A R D | NO V I S A',
+            'Pay securely with Credit/Debit Card',
+            'You will be redirected to a secure page to complete your card payment.',
+        ];
+        foreach ([['Visa', 'Mastercard'], ['Mastercard', 'Visa'], ['Visa'], ['Mastercard'],
+                  ['Visa', 'Mastercard', 'Amex'], ['Amex'], ['Discover']] as $combo) {
+            $legacy[] = 'Pay securely with your ' . implode(' or ', $combo) . '.';
+        }
+
+        return $legacy;
     }
 
     protected function get_card_icons_url(): string {
@@ -331,15 +411,9 @@ abstract class MPS_Base_Gateway extends WC_Payment_Gateway {
         return $icons[0] ?? '';
     }
 
+    /** No brand icons at checkout (client 2026-07-22). Filter kept so a theme can still add its own. */
     public function get_icon(): string {
-        $base = plugin_dir_url(MPS_PLUGIN_FILE) . 'assets/img/';
-        $html = '';
-        foreach ($this->get_allowed_cards() as $brand) {
-            if (in_array($brand, ['visa', 'mastercard'], true)) {
-                $html .= '<img src="' . esc_url($base . $brand . '.svg') . '" alt="' . esc_attr(ucfirst($brand)) . '" style="max-height:24px;margin-right:4px;vertical-align:middle;" />';
-            }
-        }
-        return apply_filters('woocommerce_gateway_icon', $html, $this->id);
+        return apply_filters('woocommerce_gateway_icon', '', $this->id);
     }
 
     protected function log(string $message): void {

@@ -133,8 +133,12 @@ class MPS_VProcessor_2D extends MPS_Base_Gateway {
             'last_four' => $last_four,
         ]);
 
-        wc_add_notice($friendly, 'error');
-        return ['result' => 'fail'];
+        // Surface the decline to the customer. Returning ['result' => 'fail'] with a notice works on
+        // classic checkout but NOT on Block checkout: the Store API discards the notice and shows its
+        // own "Something went wrong. Please contact us to get assistance." Throwing carries our
+        // message through both paths, so the customer is actually told whether to retry this card
+        // (client 2026-07-22 — seen live on the test store, decline 9011 showed the generic error).
+        throw new Exception($friendly);
     }
 
     public function process_refund($order_id, $amount = null, $reason = ''): bool|\WP_Error {

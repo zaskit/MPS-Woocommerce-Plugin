@@ -24,9 +24,13 @@
         return parts ? parts.join(' ') : d;
     }
 
-    function formatExpiry(val) {
+    function formatExpiry(val, isDeleting) {
         var d = val.replace(/\D/g,'').substring(0,4);
-        if(d.length >= 3) return d.substring(0,2) + ' / ' + d.substring(2);
+        // Show the separator the moment the MONTH is complete, so it is obvious the next digits are
+        // the year and the customer does not type their own slash (client 2026-07-22).
+        if(d.length > 2) return d.substring(0,2) + ' / ' + d.substring(2);
+        // ...but not while deleting, or backspace would re-add it and the field could never be cleared.
+        if(d.length === 2 && !isDeleting) return d + ' / ';
         return d;
     }
 
@@ -99,7 +103,8 @@
 
             function handleChange(fieldName, formatter){
                 return function(e){
-                    var val = formatter ? formatter(e.target.value) : e.target.value;
+                    var deleting = e.nativeEvent && /^delete/.test(e.nativeEvent.inputType || '');
+                    var val = formatter ? formatter(e.target.value, deleting) : e.target.value;
                     e.target.value = val;
                     stateRef.current[fieldName] = val;
                 };

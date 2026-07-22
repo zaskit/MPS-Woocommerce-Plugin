@@ -10,11 +10,18 @@
     }
 
     function formatExpiry(input){
-        input.addEventListener('input',function(){
+        input.addEventListener('input',function(e){
             var v = this.value.replace(/\D/g,'').substring(0,4);
-            if(v.length>=3){
+            var deleting = /^delete/.test((e && e.inputType) || '');
+            if(v.length>2){
                 this.value = v.substring(0,2)+' / '+v.substring(2);
+            } else if(v.length===2 && !deleting){
+                // Separator appears as soon as the month is complete, so the customer can see the
+                // year comes next and does not add a slash of their own (client 2026-07-22).
+                this.value = v+' / ';
             } else {
+                // While deleting, leave the bare digits — otherwise backspace would re-add the
+                // separator and the field could never be cleared.
                 this.value = v;
             }
         });

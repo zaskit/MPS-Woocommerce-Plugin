@@ -69,17 +69,11 @@ class MPS_Blocks_Integration extends AbstractPaymentMethodType {
         return [];
     }
 
-    /** Consent wording for the Block checkout tick-box — mirrors the classic markup. */
+    /**
+     * Consent wording for the Block checkout tick-box — mirrors the classic markup. No descriptor:
+     * it is not shown publicly (client 2026-07-22); it appears only on the generated PDF.
+     */
     private function charge_acknowledgment_text(): string {
-        $descriptor = trim((string) ($this->gateway->portal_descriptor ?? ''));
-        if ($descriptor !== '') {
-            return sprintf(
-                /* translators: %s: billing descriptor shown on the cardholder's statement */
-                esc_html__('I authorise this charge and confirm my details may be used for a charge acknowledgment. This will appear on my statement as %s.', 'mps-gateway'),
-                '<strong>' . esc_html($descriptor) . '</strong>'
-            );
-        }
-
         return esc_html__('I authorise this charge and confirm my details may be used for a charge acknowledgment.', 'mps-gateway');
     }
 }

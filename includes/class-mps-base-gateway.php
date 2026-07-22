@@ -146,26 +146,19 @@ abstract class MPS_Base_Gateway extends WC_Payment_Gateway {
      * signed PDF the merchant can submit if the charge is ever disputed.
      *
      * Optional by design: leaving it unticked must never block the order.
+     *
+     * The billing descriptor is deliberately NOT shown here (client 2026-07-22) — the descriptor is
+     * not for public display. It still appears on the generated PDF, where the form requires it as
+     * the Merchant / Business Name.
      */
     public function render_charge_acknowledgment_field(): void {
         $prefix = esc_attr($this->id);
-        $descriptor = trim((string) $this->portal_descriptor);
         ?>
         <div class="mps-ack-field">
             <label class="mps-ack-label">
                 <input type="checkbox" name="<?php echo $prefix; ?>_charge_ack" value="1" class="mps-ack-checkbox">
                 <span class="mps-ack-text">
-                    <?php
-                    if ($descriptor !== '') {
-                        printf(
-                            /* translators: %s: the billing descriptor that appears on the statement */
-                            esc_html__('I authorise this charge and confirm my details may be used for a charge acknowledgment. This will appear on my statement as %s.', 'mps-gateway'),
-                            '<strong>' . esc_html($descriptor) . '</strong>'
-                        );
-                    } else {
-                        esc_html_e('I authorise this charge and confirm my details may be used for a charge acknowledgment.', 'mps-gateway');
-                    }
-                    ?>
+                    <?php esc_html_e('I authorise this charge and confirm my details may be used for a charge acknowledgment.', 'mps-gateway'); ?>
                 </span>
             </label>
         </div>

@@ -62,15 +62,7 @@ class MPS_Blocks_Integration extends AbstractPaymentMethodType {
     }
 
     private function get_icons(): array {
-        $allowed = $this->gateway->get_allowed_cards();
-        $icons = [];
-        $base = plugin_dir_url(MPS_PLUGIN_FILE) . 'assets/img/';
-        if (in_array('mastercard', $allowed)) {
-            $icons[] = ['id' => 'mastercard', 'src' => $base . 'mastercard.svg', 'alt' => 'Mastercard'];
-        }
-        if (in_array('visa', $allowed)) {
-            $icons[] = ['id' => 'visa', 'src' => $base . 'visa.svg', 'alt' => 'Visa'];
-        }
-        return $icons;
+        // Checkout intentionally shows title + description only — no card-brand icons.
+        return [];
     }
 }

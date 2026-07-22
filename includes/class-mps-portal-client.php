@@ -79,6 +79,50 @@ class MPS_Portal_Client {
     }
 
     /**
+     * A-Processor: create a checkout session on the portal.
+     * Returns the decoded response (expects success + pay_url + token).
+     */
+    public static function create_a_session(array $data): array {
+        $settings = self::get_settings();
+        if (empty($settings['api_key']) || empty($settings['api_secret'])) {
+            return ['success' => false, 'error' => 'MPS API credentials are not configured.'];
+        }
+
+        $response = wp_remote_post(self::portal_url() . '/api/v1/a/session/create', [
+            'headers'  => self::headers(),
+            'body'     => wp_json_encode($data),
+            'timeout'  => 20,
+            'blocking' => true,
+        ]);
+
+        if (is_wp_error($response)) {
+            MPS_Logger::error('A session create failed: ' . $response->get_error_message(), 'mps-a');
+            return ['success' => false, 'error' => $response->get_error_message()];
+        }
+
+        $body = json_decode(wp_remote_retrieve_body($response), true);
+        return is_array($body) ? $body : ['success' => false, 'error' => 'Invalid portal response.'];
+    }
+
+    /**
+     * Fetch a single transaction's authoritative status from the portal.
+     * Used by the A-Processor return handler to confirm the outcome.
+     */
+    public static function get_transaction(int $id): array {
+        $response = wp_remote_get(self::portal_url() . '/api/v1/transaction/' . $id, [
+            'headers' => self::headers(),
+            'timeout' => 15,
+        ]);
+
+        if (is_wp_error($response)) {
+            return ['success' => false, 'error' => $response->get_error_message()];
+        }
+
+        $body = json_decode(wp_remote_retrieve_body($response), true);
+        return is_array($body) ? $body : ['success' => false, 'error' => 'Invalid portal response.'];
+    }
+
+    /**
      * Report a transaction to the portal with retry on failure.
      * First attempt is blocking. On failure, queued for WP Cron retry.
      */

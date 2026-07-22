@@ -47,14 +47,15 @@ abstract class MPS_Base_Gateway extends WC_Payment_Gateway {
 
         // Title + description from main settings (per-processor fields)
         $this->enabled     = $global_enabled ? 'yes' : 'no';
-        // Honor a stored title/description ONLY if the merchant wrote genuinely
-        // custom copy. Our own auto-generated "Pay securely…" strings are always
-        // regenerated so enabling Visa in the portal updates the checkout wording
-        // (icons are already dynamic; this keeps the title in sync with them).
+        // Honor whatever the merchant saved in MPS Gateway Settings for this
+        // processor. Only fall back to the generated default when the field is
+        // empty. (The settings-form field default is computed from the SAME
+        // build_default_*() methods, so an untouched field and the checkout stay
+        // in sync — see MPS_Settings_Gateway::init_form_fields().)
         $stored_title = $main_settings['title_' . $this->id] ?? '';
         $stored_desc  = $main_settings['desc_' . $this->id] ?? '';
-        $this->title       = ($stored_title !== '' && !$this->is_auto_generated_copy($stored_title)) ? $stored_title : $default_title;
-        $this->description = ($stored_desc  !== '' && !$this->is_auto_generated_copy($stored_desc))  ? $stored_desc  : $default_desc;
+        $this->title       = ($stored_title !== '') ? $stored_title : $default_title;
+        $this->description = ($stored_desc  !== '') ? $stored_desc  : $default_desc;
         // Leave method_title and method_description empty so WC treats these as "shell" gateways.
         // WC hides shells from the admin Payments list when a non-shell gateway (MPS_Settings_Gateway)
         // exists from the same plugin. The individual processors still appear at checkout.
@@ -306,7 +307,7 @@ abstract class MPS_Base_Gateway extends WC_Payment_Gateway {
 
     }
 
-    protected function build_default_title(): string {
+    public function build_default_title(): string {
         $allowed = $this->get_allowed_cards();
         if (in_array('visa', $allowed, true)) {
             return 'Pay securely via V I S A & M A S T E R C A R D';
@@ -314,29 +315,7 @@ abstract class MPS_Base_Gateway extends WC_Payment_Gateway {
         return 'Pay securely via M A S T E R C A R D | NO V I S A';
     }
 
-    /**
-     * True ONLY when a stored title/description EXACTLY equals one of our auto-generated
-     * brand strings. Auto strings are regenerated from allowed_cards so enabling Visa in the
-     * portal updates the default wording. v2.3.3 FIX: the old check treated ANY value starting
-     * with "Pay securely" as auto — so a merchant's custom copy that began that way (the natural
-     * result of editing the default) was silently discarded and never showed at checkout. Now we
-     * match the exact known auto strings only, so ANY genuine edit is honored verbatim.
-     */
-    protected function is_auto_generated_copy(string $value): bool {
-        $value = trim($value);
-        if ($value === '') return false;
-        $autos = [
-            'Pay securely via V I S A & M A S T E R C A R D',
-            'Pay securely via M A S T E R C A R D | NO V I S A',
-        ];
-        // Description autos: "Pay securely with your <brands>." across card combos/orders.
-        foreach ([['Visa', 'Mastercard'], ['Mastercard', 'Visa'], ['Visa'], ['Mastercard']] as $combo) {
-            $autos[] = 'Pay securely with your ' . implode(' or ', $combo) . '.';
-        }
-        return in_array($value, $autos, true);
-    }
-
-    protected function build_default_description(): string {
+    public function build_default_description(): string {
         $brands = array_map('ucfirst', $this->get_allowed_cards());
         return 'Pay securely with your ' . implode(' or ', $brands) . '.';
     }

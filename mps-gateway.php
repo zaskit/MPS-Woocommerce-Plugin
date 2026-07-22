@@ -2,7 +2,7 @@
 /**
  * Plugin Name: MPS Gateway
  * Description: Connect your WooCommerce store to MPS Gateway for multi-processor payment processing. Transactions go directly to processors; the portal manages configuration.
- * Version: 2.3.4
+ * Version: 2.4.7
  * Author: ZASK
  * Author URI: https://zask.it
  * Requires at least: 6.0
@@ -32,7 +32,7 @@ if (defined('MPS_PLUGIN_FILE')) {
 
 define('MPS_PLUGIN_FILE', __FILE__);
 define('MPS_PLUGIN_DIR', plugin_dir_path(__FILE__));
-define('MPS_PLUGIN_VERSION', '2.3.4');
+define('MPS_PLUGIN_VERSION', '2.4.7');
 
 // HPOS compatibility
 add_action('before_woocommerce_init', function() {
@@ -71,6 +71,7 @@ add_action('plugins_loaded', function() {
     require_once MPS_PLUGIN_DIR . 'includes/class-mps-eprocessor-3d.php';
     require_once MPS_PLUGIN_DIR . 'includes/class-mps-eprocessor-hosted.php';
     require_once MPS_PLUGIN_DIR . 'includes/class-mps-kprocessor.php';
+    require_once MPS_PLUGIN_DIR . 'includes/class-mps-aprocessor.php';
     require_once MPS_PLUGIN_DIR . 'includes/class-mps-gateway-factory.php';
 
     // Register dynamic gateways with WooCommerce
@@ -187,13 +188,14 @@ add_action('plugins_loaded', function() {
                     $env     = strtoupper($gw['environment'] ?? 'sandbox');
                     $cards   = implode(', ', array_map('ucfirst', $gw['supported_cards'] ?? []));
                     $threeds = !empty($gw['supports_3ds']) ? '3D-Secure' : 'Direct';
-                    $is_redirect = ($gw['processor_code'] === 'k' || $gw['processor_type'] === 'hosted');
+                    $is_redirect = ($gw['processor_code'] === 'k' || $gw['processor_code'] === 'a' || $gw['processor_type'] === 'hosted');
 
                     // Type badge color
                     $code = $gw['processor_code'] ?? '';
                     if ($code === 'v') $badge_color = '#3b82f6';
                     elseif ($code === 'e') $badge_color = '#8b5cf6';
                     elseif ($code === 'k') $badge_color = '#10b981';
+                    elseif ($code === 'a') $badge_color = '#f59e0b';
                     else $badge_color = '#6b7280';
 
                     $env_badge = $env === 'LIVE'
@@ -216,11 +218,12 @@ add_action('plugins_loaded', function() {
                         'description' => '',
                     ];
 
-                    $allowed = $gw['allowed_cards'] ?? $gw['supported_cards'] ?? [];
-                    $default_checkout_title = in_array('visa', $allowed, true)
-                        ? 'Pay securely via V I S A & M A S T E R C A R D'
-                        : 'Pay securely via M A S T E R C A R D | NO V I S A';
-                    $default_checkout_desc  = 'Pay securely with your ' . implode(' or ', array_map('ucfirst', $allowed)) . '.';
+                    // Field defaults come from the gateway's OWN default-copy methods,
+                    // so the settings form shows exactly what the checkout would show
+                    // when the field is left untouched (no more form/checkout mismatch).
+                    $gw_instance = MPS_Gateway_Factory::find($gw_id);
+                    $default_checkout_title = $gw_instance ? $gw_instance->build_default_title() : '';
+                    $default_checkout_desc  = $gw_instance ? $gw_instance->build_default_description() : '';
 
                     $fields['title_' . $gw_id] = [
                         'title'       => 'Checkout Title',
@@ -444,7 +447,7 @@ add_action('plugins_loaded', function() {
     // ─── Descriptor Display (Thank-you page + Customer emails) ───
     // Thank-you page: very top (before everything) and after order details
     add_action('woocommerce_before_thankyou', 'mps_show_descriptor_thankyou', 10);
-    add_action('woocommerce_thankyou', 'mps_show_descriptor_thankyou', 20);
+    add_action('woocommerce_thankyou', 'mps_show_descriptor_thankyou', 5);
     // Customer emails: show before and after order table (twice)
     add_action('woocommerce_email_before_order_table', 'mps_show_descriptor_email', 10, 4);
     add_action('woocommerce_email_after_order_table', 'mps_show_descriptor_email', 10, 4);
@@ -459,10 +462,11 @@ add_action('plugins_loaded', function() {
         $descriptor = $order->get_meta('_mps_descriptor');
         if (empty($descriptor)) return;
 
-        echo '<div class="mps-descriptor-message" style="background:#f0f7ff;border:1px solid #c7d2fe;border-left:5px solid #6366f1;padding:20px 24px;margin:20px 0 28px;border-radius:6px;font-size:15px;line-height:1.7;color:#1d2327;">';
-        echo '<div style="font-size:20px;font-weight:700;color:#4338ca;margin-bottom:10px;letter-spacing:0.3px;">' . esc_html($descriptor) . '</div>';
-        echo '<p style="margin:0 0 8px;font-size:15px;">Your payment has been processed securely. The charge will appear on your bank/card statement under the name shown above.</p>';
-        echo '<p style="margin:0;font-size:14px;color:#6b7280;">If you have any questions regarding this transaction, please contact our support team. Please do not initiate chargebacks.</p>';
+        echo '<div class="mps-descriptor-message" style="background:#ecfdf5;border:1px solid #6ee7b7;border-left:6px solid #059669;padding:26px 28px;margin:0 0 32px;border-radius:10px;line-height:1.6;color:#064e3b;text-align:center;">';
+        echo '<div style="font-size:14px;font-weight:600;text-transform:uppercase;letter-spacing:1px;color:#059669;margin-bottom:8px;">This charge will appear on your statement as</div>';
+        echo '<div style="font-size:34px;font-weight:800;color:#047857;margin-bottom:14px;letter-spacing:0.3px;line-height:1.2;">' . esc_html($descriptor) . '</div>';
+        echo '<p style="margin:0 0 6px;font-size:15px;color:#065f46;">Your payment has been processed securely. Please look for the name above on your bank/card statement.</p>';
+        echo '<p style="margin:0;font-size:13px;color:#059669;">Questions about this transaction? Contact our support team before initiating any chargeback.</p>';
         echo '</div>';
     }
 
@@ -609,6 +613,30 @@ add_action('plugins_loaded', function() {
 
             wp_redirect(wc_get_checkout_url());
             exit;
+        }
+    });
+
+    // ─── A-Processor Return Handler (customer back from the cloak pay page) ───
+    add_action('template_redirect', function() {
+        if (empty($_GET['mps_a_return']) || empty($_GET['order_id'])) return;
+
+        $order_id = (int) $_GET['order_id'];
+        $order    = wc_get_order($order_id);
+        if (!$order) return;
+
+        // Verify the order key so the return URL can't be forged for another order.
+        if (!isset($_GET['key']) || !hash_equals($order->get_order_key(), sanitize_text_field($_GET['key']))) {
+            MPS_Logger::error("A-Processor return: order key mismatch for order #{$order_id}", 'mps-a');
+            return;
+        }
+
+        $gateway = MPS_Gateway_Factory::find($order->get_payment_method());
+        if ($gateway instanceof MPS_AProcessor) {
+            $gateway->process_return([
+                'order_id'       => $order_id,
+                'transaction_id' => isset($_GET['transaction_id']) ? (int) $_GET['transaction_id'] : 0,
+                'status'         => isset($_GET['status']) ? sanitize_text_field($_GET['status']) : '',
+            ]);
         }
     });
 });

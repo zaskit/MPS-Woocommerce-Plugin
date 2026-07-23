@@ -73,11 +73,9 @@
                 if(!dataVar.rest_decline_url) return;
                 var url = dataVar.rest_decline_url;
                 if(orderId){ url += (url.indexOf('?') > -1 ? '&' : '?') + 'order=' + encodeURIComponent(orderId); }
-                try { console.debug('[MPS] fetching decline', {orderId: orderId, url: url}); } catch(e){}
                 fetch(url, {credentials:'same-origin', headers:{'Accept':'application/json'}})
                     .then(function(r){ return r.ok ? r.json() : null; })
                     .then(function(j){
-                        try { console.debug('[MPS] decline response', j); } catch(e){}
                         if(j && j.decline && j.decline.message){
                             setDecline({ message: j.decline.message, final: !!j.decline.final });
                         }
@@ -91,7 +89,6 @@
                 if(!onFail) return;
                 var unsub = onFail(function(payload){
                     var oid = (payload && (payload.orderId || payload.order_id)) || getStoreOrderId();
-                    try { console.debug('[MPS] onCheckoutFail', {orderId: oid}); } catch(e){}
                     fetchDecline(oid);
                     return true;
                 });
@@ -112,7 +109,6 @@
                         if(status === prev) return;
                         var wasRunning = (prev === 'processing' || prev === 'after_processing' || prev === 'before_processing');
                         if(status === 'idle' && wasRunning){
-                            try { console.debug('[MPS] checkout returned to idle after an attempt — checking decline'); } catch(e){}
                             fetchDecline(s.getOrderId ? s.getOrderId() : 0);
                         }
                         prev = status;

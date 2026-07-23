@@ -61,49 +61,65 @@
             var declineMsg = decline ? decline.message : '';
             var declineFinal = decline ? !!decline.final : false;
 
-            // Surface the processor's decline classification under the card fields.
+            // Fetch the decline the server stored for this order (see remember_for_order) and show it
+            // under the card fields. Keyed by order id so it does not depend on the WC session cookie.
+            var getStoreOrderId = function(){
+                try {
+                    var s = window.wp.data.select('wc/store/checkout');
+                    return s && s.getOrderId ? s.getOrderId() : 0;
+                } catch(e){ return 0; }
+            };
+            var fetchDecline = function(orderId){
+                if(!dataVar.rest_decline_url) return;
+                var url = dataVar.rest_decline_url;
+                if(orderId){ url += (url.indexOf('?') > -1 ? '&' : '?') + 'order=' + encodeURIComponent(orderId); }
+                try { console.debug('[MPS] fetching decline', {orderId: orderId, url: url}); } catch(e){}
+                fetch(url, {credentials:'same-origin', headers:{'Accept':'application/json'}})
+                    .then(function(r){ return r.ok ? r.json() : null; })
+                    .then(function(j){
+                        try { console.debug('[MPS] decline response', j); } catch(e){}
+                        if(j && j.decline && j.decline.message){
+                            setDecline({ message: j.decline.message, final: !!j.decline.final });
+                        }
+                    })
+                    .catch(function(){});
+            };
+
+            // Trigger 1 — the WC Blocks failure event, when the build exposes it.
             window.wp.element.useEffect(function(){
                 var onFail = eventRegistration.onCheckoutFail || eventRegistration.onCheckoutAfterProcessingWithError;
                 if(!onFail) return;
                 var unsub = onFail(function(payload){
-                    // Primary source: the decline the server remembered for this session. Block
-                    // checkout does not reload and the thrown gateway error does not carry payment
-                    // details to the JS, so we fetch it — this puts the SAME message that appears in
-                    // the top notice banner directly under the card fields too.
-                    if(dataVar.rest_decline_url){
-                        var declineUrl = dataVar.rest_decline_url;
-                        var orderId = payload && (payload.orderId || payload.order_id);
-                        if(orderId){ declineUrl += (declineUrl.indexOf('?') > -1 ? '&' : '?') + 'order=' + encodeURIComponent(orderId); }
-                        try { console.debug('[MPS] checkout failed — fetching decline', {orderId: orderId, url: declineUrl}); } catch(e){}
-                        fetch(declineUrl, {credentials:'same-origin', headers:{'Accept':'application/json'}})
-                            .then(function(r){ return r.ok ? r.json() : null; })
-                            .then(function(j){
-                                try { console.debug('[MPS] last-decline response', j); } catch(e){}
-                                if(j && j.decline && j.decline.message){
-                                    setDecline({ message: j.decline.message, final: !!j.decline.final });
-                                }
-                            })
-                            .catch(function(){});
-                    }
-                    // Fallback: an inline message on the failure payload, if a processor ever supplies one.
-                    var msg = '';
-                    try {
-                        msg = (payload && payload.processingResponse && payload.processingResponse.paymentDetails
-                               && payload.processingResponse.paymentDetails.mps_decline_message) || '';
-                        if(!msg && payload && payload.processingResponse && payload.processingResponse.paymentDetails){
-                            msg = payload.processingResponse.paymentDetails.errorMessage || '';
-                        }
-                    } catch(e){}
-                    if(msg){
-                        setDecline({
-                            message: msg,
-                            final: msg.indexOf('do not retry') !== -1
-                        });
-                    }
+                    var oid = (payload && (payload.orderId || payload.order_id)) || getStoreOrderId();
+                    try { console.debug('[MPS] onCheckoutFail', {orderId: oid}); } catch(e){}
+                    fetchDecline(oid);
                     return true;
                 });
                 return unsub;
             },[eventRegistration]);
+
+            // Trigger 2 — watch the checkout data store directly. When an attempt finishes and checkout
+            // drops back to idle (i.e. it did NOT complete), look up any decline for the order. This is
+            // independent of the payment-method event API, so it works even if onCheckoutFail never fires.
+            window.wp.element.useEffect(function(){
+                if(!(window.wp.data && window.wp.data.subscribe)) return;
+                var prev = '';
+                var unsub = window.wp.data.subscribe(function(){
+                    try {
+                        var s = window.wp.data.select('wc/store/checkout');
+                        if(!s || !s.getCheckoutStatus) return;
+                        var status = s.getCheckoutStatus();
+                        if(status === prev) return;
+                        var wasRunning = (prev === 'processing' || prev === 'after_processing' || prev === 'before_processing');
+                        if(status === 'idle' && wasRunning){
+                            try { console.debug('[MPS] checkout returned to idle after an attempt — checking decline'); } catch(e){}
+                            fetchDecline(s.getOrderId ? s.getOrderId() : 0);
+                        }
+                        prev = status;
+                    } catch(e){}
+                });
+                return unsub;
+            },[]);
 
             window.wp.element.useEffect(function(){
                 if(!onPaymentSetup) return;

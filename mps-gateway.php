@@ -2,7 +2,7 @@
 /**
  * Plugin Name: MPS Gateway
  * Description: Connect your WooCommerce store to MPS Gateway for multi-processor payment processing. Transactions go directly to processors; the portal manages configuration.
- * Version: 2.5.0
+ * Version: 2.5.1
  * Author: ZASK
  * Author URI: https://zask.it
  * Requires at least: 6.0
@@ -32,7 +32,7 @@ if (defined('MPS_PLUGIN_FILE')) {
 
 define('MPS_PLUGIN_FILE', __FILE__);
 define('MPS_PLUGIN_DIR', plugin_dir_path(__FILE__));
-define('MPS_PLUGIN_VERSION', '2.5.0');
+define('MPS_PLUGIN_VERSION', '2.5.1');
 
 // HPOS compatibility
 add_action('before_woocommerce_init', function() {
@@ -435,6 +435,40 @@ add_action('plugins_loaded', function() {
     }
     add_action('woocommerce_checkout_create_order', 'mps_capture_charge_acknowledgment', 10, 1);
     add_action('woocommerce_store_api_checkout_update_order_from_request', 'mps_capture_charge_acknowledgment', 10, 1);
+
+    /**
+     * Read-only endpoint the Block checkout calls after a failed payment to fetch the decline message
+     * the server remembered for THIS session (see MPS_Decline_Codes::remember()). Block checkout does
+     * not reload and a thrown gateway error does not carry payment details to the JS, so this is how
+     * the same message that shows in the top notice also gets rendered under the card fields.
+     *
+     * Returns only our own generic wording — no card data, no order data, nothing session-identifying.
+     */
+    add_action('rest_api_init', function() {
+        register_rest_route('mps/v1', '/last-decline', [
+            'methods'             => 'GET',
+            'permission_callback' => '__return_true',
+            'callback'            => function() {
+                if (!class_exists('MPS_Decline_Codes') || !function_exists('WC')) {
+                    return new WP_REST_Response(['decline' => null], 200);
+                }
+                // Custom REST routes don't boot the WooCommerce session automatically — start it so we
+                // can read the decline stored under the customer's WC session cookie.
+                if (null === WC()->session) {
+                    $handler = apply_filters('woocommerce_session_handler', 'WC_Session_Handler');
+                    if (class_exists($handler)) {
+                        WC()->session = new $handler();
+                        WC()->session->init();
+                    }
+                }
+                $d = MPS_Decline_Codes::consume();
+                return new WP_REST_Response(['decline' => $d ? [
+                    'message' => (string) $d['message'],
+                    'final'   => !empty($d['final']),
+                ] : null], 200);
+            },
+        ]);
+    });
 
     /**
      * One-time cleanup of checkout copy the merchant never chose (client 2026-07-22).

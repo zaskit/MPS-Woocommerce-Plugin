@@ -47,6 +47,8 @@ class MPS_Blocks_Integration extends AbstractPaymentMethodType {
             // Optional charge-acknowledgment consent line (client 2026-07-22). Empty string hides
             // the tick-box entirely; <strong> around the descriptor is intentional.
             'ack_text'     => $this->charge_acknowledgment_text(),
+            // Endpoint the JS polls after a failed payment to render the decline under the card fields.
+            'rest_decline_url' => rest_url('mps/v1/last-decline'),
             'supports_3ds' => $this->gateway->supports_3ds,
             'has_fields'   => $this->gateway->has_fields,
         ];

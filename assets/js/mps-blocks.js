@@ -66,6 +66,21 @@
                 var onFail = eventRegistration.onCheckoutFail || eventRegistration.onCheckoutAfterProcessingWithError;
                 if(!onFail) return;
                 var unsub = onFail(function(payload){
+                    // Primary source: the decline the server remembered for this session. Block
+                    // checkout does not reload and the thrown gateway error does not carry payment
+                    // details to the JS, so we fetch it — this puts the SAME message that appears in
+                    // the top notice banner directly under the card fields too.
+                    if(dataVar.rest_decline_url){
+                        fetch(dataVar.rest_decline_url, {credentials:'same-origin', headers:{'Accept':'application/json'}})
+                            .then(function(r){ return r.ok ? r.json() : null; })
+                            .then(function(j){
+                                if(j && j.decline && j.decline.message){
+                                    setDecline({ message: j.decline.message, final: !!j.decline.final });
+                                }
+                            })
+                            .catch(function(){});
+                    }
+                    // Fallback: an inline message on the failure payload, if a processor ever supplies one.
                     var msg = '';
                     try {
                         msg = (payload && payload.processingResponse && payload.processingResponse.paymentDetails

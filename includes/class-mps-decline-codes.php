@@ -88,6 +88,29 @@ class MPS_Decline_Codes {
         ]);
     }
 
+    /**
+     * Remember the decline against the ORDER, not the session. Block checkout gives the JS the order
+     * id in the failure payload, so keying by order id lets the under-card notice fetch the exact
+     * message without depending on the WC session cookie reaching a custom REST route (which the
+     * Store API does not guarantee). Short TTL — it only has to survive until the JS asks for it.
+     */
+    public static function remember_for_order(int $order_id, string $code): void {
+        if ($order_id <= 0) return;
+        set_transient('mps_decline_' . $order_id, [
+            'message' => self::message($code),
+            'final'   => self::is_final($code),
+        ], 10 * MINUTE_IN_SECONDS);
+    }
+
+    /** The decline stored for an order, taken once. Carries only our own wording — no card/PII. */
+    public static function take_for_order(int $order_id): ?array {
+        if ($order_id <= 0) return null;
+        $d = get_transient('mps_decline_' . $order_id);
+        if (!is_array($d) || empty($d['message'])) return null;
+        delete_transient('mps_decline_' . $order_id);
+        return ['message' => (string) $d['message'], 'final' => !empty($d['final'])];
+    }
+
     /** The remembered decline, consumed once so it doesn't haunt the next checkout attempt. */
     public static function consume(): ?array {
         if (!function_exists('WC') || !WC()->session) return null;

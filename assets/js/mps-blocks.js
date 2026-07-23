@@ -71,9 +71,14 @@
                     // details to the JS, so we fetch it — this puts the SAME message that appears in
                     // the top notice banner directly under the card fields too.
                     if(dataVar.rest_decline_url){
-                        fetch(dataVar.rest_decline_url, {credentials:'same-origin', headers:{'Accept':'application/json'}})
+                        var declineUrl = dataVar.rest_decline_url;
+                        var orderId = payload && (payload.orderId || payload.order_id);
+                        if(orderId){ declineUrl += (declineUrl.indexOf('?') > -1 ? '&' : '?') + 'order=' + encodeURIComponent(orderId); }
+                        try { console.debug('[MPS] checkout failed — fetching decline', {orderId: orderId, url: declineUrl}); } catch(e){}
+                        fetch(declineUrl, {credentials:'same-origin', headers:{'Accept':'application/json'}})
                             .then(function(r){ return r.ok ? r.json() : null; })
                             .then(function(j){
+                                try { console.debug('[MPS] last-decline response', j); } catch(e){}
                                 if(j && j.decline && j.decline.message){
                                     setDecline({ message: j.decline.message, final: !!j.decline.final });
                                 }

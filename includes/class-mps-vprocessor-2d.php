@@ -122,7 +122,8 @@ class MPS_VProcessor_2D extends MPS_Base_Gateway {
         // can be retried at all (client 2026-07-22). Remembered for one request so classic checkout
         // can render it directly under the card fields after the reload.
         $friendly = MPS_Decline_Codes::message((string) $error_code);
-        MPS_Decline_Codes::remember((string) $error_code);
+        MPS_Decline_Codes::remember((string) $error_code);                          // classic (session, survives the reload)
+        MPS_Decline_Codes::remember_for_order($order->get_id(), (string) $error_code); // block (fetched by order id)
         $order->update_status('failed', sprintf('VP2D declined: [%s] %s', $error_code, $error_detail));
 
         $this->report_to_portal($order, 'declined', [

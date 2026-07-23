@@ -2,7 +2,7 @@
 /**
  * Plugin Name: MPS Gateway
  * Description: Connect your WooCommerce store to MPS Gateway for multi-processor payment processing. Transactions go directly to processors; the portal manages configuration.
- * Version: 2.5.1
+ * Version: 2.5.2
  * Author: ZASK
  * Author URI: https://zask.it
  * Requires at least: 6.0
@@ -32,7 +32,7 @@ if (defined('MPS_PLUGIN_FILE')) {
 
 define('MPS_PLUGIN_FILE', __FILE__);
 define('MPS_PLUGIN_DIR', plugin_dir_path(__FILE__));
-define('MPS_PLUGIN_VERSION', '2.5.1');
+define('MPS_PLUGIN_VERSION', '2.5.2');
 
 // HPOS compatibility
 add_action('before_woocommerce_init', function() {
@@ -448,20 +448,27 @@ add_action('plugins_loaded', function() {
         register_rest_route('mps/v1', '/last-decline', [
             'methods'             => 'GET',
             'permission_callback' => '__return_true',
-            'callback'            => function() {
+            'args'                => ['order' => ['sanitize_callback' => 'absint']],
+            'callback'            => function($request) {
                 if (!class_exists('MPS_Decline_Codes') || !function_exists('WC')) {
                     return new WP_REST_Response(['decline' => null], 200);
                 }
-                // Custom REST routes don't boot the WooCommerce session automatically — start it so we
-                // can read the decline stored under the customer's WC session cookie.
-                if (null === WC()->session) {
-                    $handler = apply_filters('woocommerce_session_handler', 'WC_Session_Handler');
-                    if (class_exists($handler)) {
-                        WC()->session = new $handler();
-                        WC()->session->init();
+                // Primary: keyed by order id (Block checkout hands the JS the order id) — no dependence
+                // on the WC session cookie reaching this custom route.
+                $order_id = (int) $request->get_param('order');
+                $d = MPS_Decline_Codes::take_for_order($order_id);
+
+                // Fallback: the session-remembered decline (classic checkout, or if no order id given).
+                if (!$d) {
+                    if (null === WC()->session) {
+                        $handler = apply_filters('woocommerce_session_handler', 'WC_Session_Handler');
+                        if (class_exists($handler)) {
+                            WC()->session = new $handler();
+                            WC()->session->init();
+                        }
                     }
+                    $d = MPS_Decline_Codes::consume();
                 }
-                $d = MPS_Decline_Codes::consume();
                 return new WP_REST_Response(['decline' => $d ? [
                     'message' => (string) $d['message'],
                     'final'   => !empty($d['final']),

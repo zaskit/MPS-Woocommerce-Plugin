@@ -40,8 +40,11 @@ class MPS_Blocks_Integration extends AbstractPaymentMethodType {
     public function get_payment_method_data(): array {
         $data = [
             'id'           => $this->name,
-            'title'        => $this->gateway->title,
-            'description'  => $this->gateway->description ?? '',
+            // get_title()/get_description() so woocommerce_gateway_title and
+            // woocommerce_gateway_description apply on the Block checkout too. Reading the raw
+            // properties made those filters silently do nothing here while working on classic.
+            'title'        => $this->gateway->get_title(),
+            'description'  => $this->gateway->get_description() ?? '',
             'supports'     => ['products'],
             'icons'        => $this->get_icons(),
             // Optional charge-acknowledgment consent line (client 2026-07-22). Empty string hides

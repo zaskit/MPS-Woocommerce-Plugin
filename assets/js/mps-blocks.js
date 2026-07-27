@@ -230,11 +230,14 @@
             return createElement('div', { className: 'mps-card-form' }, elements);
         };
 
+        // Plain inline flow, NOT inline-flex: as a flex container the title becomes a shrinkable
+        // flex item, so on narrow screens it is squeezed into a column and wraps mid-word while
+        // any icons keep their full width (client report 2026-07-26). Inline text wraps normally.
         var Label = function(){
             var icons = (dataVar.icons || []).map(function(ic, i){
-                return createElement('img', {key:i, src:ic.src, alt:ic.alt, style:{maxHeight:'24px',marginLeft:'6px',verticalAlign:'middle',display:'inline-block'}});
+                return createElement('img', {key:i, src:ic.src, alt:ic.alt, style:{maxHeight:'24px',marginLeft:'6px',verticalAlign:'-6px',display:'inline-block'}});
             });
-            return createElement('span', {style:{display:'inline-flex',alignItems:'center',gap:'4px'}},
+            return createElement('span', {style:{display:'inline'}},
                 decodeEntities(dataVar.title || 'Pay by Card'),
                 icons
             );

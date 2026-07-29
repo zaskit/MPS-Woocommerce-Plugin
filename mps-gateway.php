@@ -2,7 +2,7 @@
 /**
  * Plugin Name: MPS Gateway
  * Description: Connect your WooCommerce store to MPS Gateway for multi-processor payment processing. Transactions go directly to processors; the portal manages configuration.
- * Version: 2.5.5
+ * Version: 2.5.6
  * Author: ZASK
  * Author URI: https://zask.it
  * Requires at least: 6.0
@@ -32,7 +32,7 @@ if (defined('MPS_PLUGIN_FILE')) {
 
 define('MPS_PLUGIN_FILE', __FILE__);
 define('MPS_PLUGIN_DIR', plugin_dir_path(__FILE__));
-define('MPS_PLUGIN_VERSION', '2.5.5');
+define('MPS_PLUGIN_VERSION', '2.5.6');
 
 // HPOS compatibility
 add_action('before_woocommerce_init', function() {
@@ -946,6 +946,89 @@ add_filter('upgrader_source_selection', function($source, $remote_source, $upgra
 
     return $source;
 }, 10, 4);
+
+/**
+ * v2.5.6 — Recover from WooCommerce silently dropping a gateway.
+ *
+ * WC_Payment_Gateways::init() stores each gateway as
+ *     $this->payment_gateways[ $ordering[ $gateway->id ] ] = $gateway;
+ * keyed by its NUMBER in the woocommerce_gateway_order option, then ksort()s. Two gateways holding
+ * the same number therefore overwrite each other — the loser (whichever core loads first) vanishes
+ * from the registry entirely. It never reaches the classic checkout, never reaches the Store API's
+ * payment_methods list (CartSchema reads get_available_payment_gateways()), and NOTHING is logged
+ * or surfaced to the merchant. The gateway still constructs fine and still registers its Blocks
+ * integration — which is what makes this so confusing to diagnose.
+ *
+ * The per-processor MPS gateways are unusually exposed to this: they hold values in that option but
+ * are hidden "shell" rows in the Payments UI, so the merchant cannot drag them and a stale value can
+ * end up colliding after the other gateways are re-sequenced by the grouped WC 9.9+/10.x UI.
+ *
+ * Two-part repair, deliberately conservative — we only ever remove OUR OWN key from the shared
+ * option, never another plugin's:
+ *   1. Put any missing MPS gateway back into the registry so THIS request's checkout is correct.
+ *   2. Drop the colliding mps_* key from woocommerce_gateway_order so the tie disappears for every
+ *      later request. That also rescues the third-party gateway in the case where the MPS gateway
+ *      was the one that won the collision. Display position is unaffected: mps_sorted_gateway_ids()
+ *      below clusters the MPS methods at the "MPS Gateway" row regardless of their raw value.
+ */
+add_action('wc_payment_gateways_initialized', 'mps_restore_dropped_gateways', 5);
+
+function mps_restore_dropped_gateways($wc_payment_gateways) {
+    if (!is_object($wc_payment_gateways) || !isset($wc_payment_gateways->payment_gateways)) return;
+    if (!class_exists('MPS_Gateway_Factory')) return;
+
+    $registry = $wc_payment_gateways->payment_gateways;
+    if (!is_array($registry)) return;
+
+    $present = [];
+    foreach ($registry as $gateway) {
+        if (is_object($gateway) && isset($gateway->id)) $present[$gateway->id] = true;
+    }
+
+    $ordering = (array) get_option('woocommerce_gateway_order', []);
+    $missing  = [];
+
+    foreach (MPS_Gateway_Factory::build() as $gateway) {
+        if (isset($present[$gateway->id])) continue;
+        $missing[] = $gateway->id;
+
+        // Re-insert at the first free slot past the ordering block so nothing else is displaced.
+        $key = 999;
+        while (isset($registry[$key])) $key++;
+        $registry[$key] = $gateway;
+
+        $collided_with = [];
+        if (isset($ordering[$gateway->id])) {
+            foreach ($ordering as $other_id => $value) {
+                if ($other_id !== $gateway->id && (string) $value === (string) $ordering[$gateway->id]) {
+                    $collided_with[] = $other_id;
+                }
+            }
+        }
+        MPS_Logger::error(sprintf(
+            'Gateway %s was dropped by WooCommerce (order value %s shared with: %s) — restored for this request.',
+            $gateway->id,
+            $ordering[$gateway->id] ?? 'none',
+            $collided_with ? implode(', ', $collided_with) : 'unknown'
+        ));
+    }
+
+    if (!$missing) return;
+
+    ksort($registry);
+    $wc_payment_gateways->payment_gateways = $registry;
+
+    // Break the tie permanently by removing our own key. WC then appends the gateway after the
+    // ordered block on the next request, and the sort filter puts it back where it belongs.
+    $changed = false;
+    foreach ($missing as $id) {
+        if (isset($ordering[$id])) { unset($ordering[$id]); $changed = true; }
+    }
+    if ($changed) {
+        update_option('woocommerce_gateway_order', $ordering);
+        MPS_Logger::info('Removed the colliding mps_* entries from woocommerce_gateway_order.');
+    }
+}
 
 /**
  * v2.3.2 — Gateway ordering helpers (payment-provider sorting).

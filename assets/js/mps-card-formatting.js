@@ -66,12 +66,36 @@
         });
     }
 
+    // The charge acknowledgment is mandatory (client 2026-07-29). It renders ticked; if the customer
+    // clears it we put it straight back and say why, rather than letting them reach the pay button
+    // with it clear and be stopped by an opaque browser validation bubble.
+    function setupAckLock(box){
+        if(box.getAttribute('data-mps-ack-locked') === '1') return;
+        box.setAttribute('data-mps-ack-locked','1');
+        box.checked = true;
+
+        var field  = box.closest ? box.closest('.mps-ack-field') : null;
+        var notice = field ? field.querySelector('.mps-ack-required') : null;
+
+        box.addEventListener('change', function(){
+            if(this.checked){
+                if(notice) notice.style.display = 'none';
+                return;
+            }
+            this.checked = true;
+            if(notice) notice.style.display = 'block';
+        });
+    }
+
     function init(){
         // Card number fields
         document.querySelectorAll('.mps-card-form input[name$="_card_number"]').forEach(function(el){
             formatCardNumber(el);
             setupMastercardCheck(el);
         });
+
+        // Mandatory charge-acknowledgment tick-box
+        document.querySelectorAll('.mps-card-form input[name$="_charge_ack"]').forEach(setupAckLock);
 
         // Expiry fields
         document.querySelectorAll('.mps-card-form input[name$="_card_expiry"]').forEach(formatExpiry);

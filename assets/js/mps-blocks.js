@@ -55,7 +55,11 @@
             // Support both old and new WC Blocks event names
             var onPaymentSetup = eventRegistration.onPaymentSetup || eventRegistration.onPaymentProcessing;
 
-            var stateRef = window.wp.element.useRef({});
+            // charge_ack starts set: the acknowledgment is mandatory and renders ticked, so the
+            // consent is already given by the time the customer can submit.
+            var stateRef = window.wp.element.useRef(dataVar.ack_text ? {charge_ack:'1'} : {});
+            var ackBlockedState = window.wp.element.useState(false);
+            var ackBlocked = ackBlockedState[0], setAckBlocked = ackBlockedState[1];
             var declineState = window.wp.element.useState(null);
             var decline = declineState[0], setDecline = declineState[1];
             var declineMsg = decline ? decline.message : '';
@@ -203,21 +207,33 @@
                 }, declineMsg));
             }
 
-            // Optional Cardholder Charge Acknowledgment — never blocks the order.
+            // Mandatory Cardholder Charge Acknowledgment (client 2026-07-29). Ticked on arrival and
+            // held ticked: `checked` is a fixed prop, so React re-renders it ticked however the
+            // customer clicks it, and we explain why instead of silently ignoring the click.
             if(dataVar.ack_text){
-                elements.push(createElement('div', {key:'ack', className:'mps-ack-field'},
-                    createElement('label', {className:'mps-ack-label'},
+                var ackChildren = [
+                    createElement('label', {key:'lbl', className:'mps-ack-label'},
                         createElement('input', {
                             type:'checkbox',
                             className:'mps-ack-checkbox',
-                            onChange: function(e){ stateRef.current.charge_ack = e.target.checked ? '1' : ''; }
+                            checked: true,
+                            onChange: function(){
+                                stateRef.current.charge_ack = '1';
+                                setAckBlocked(true);
+                            }
                         }),
                         createElement('span', {
                             className:'mps-ack-text',
                             dangerouslySetInnerHTML:{ __html: dataVar.ack_text }
                         })
                     )
-                ));
+                ];
+                if(ackBlocked){
+                    ackChildren.push(createElement('div', {
+                        key:'req', className:'mps-ack-required', role:'alert'
+                    }, 'This acknowledgment is required to complete your payment.'));
+                }
+                elements.push(createElement('div', {key:'ack', className:'mps-ack-field'}, ackChildren));
             }
 
             // Secure badge

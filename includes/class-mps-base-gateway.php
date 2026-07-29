@@ -141,11 +141,18 @@ abstract class MPS_Base_Gateway extends WC_Payment_Gateway {
     }
 
     /**
-     * Optional Cardholder Charge Acknowledgment tick-box (client 2026-07-22). When ticked we capture
-     * the cardholder's confirmation that they authorised this charge, and the portal turns it into a
-     * signed PDF the merchant can submit if the charge is ever disputed.
+     * Cardholder Charge Acknowledgment tick-box. We capture the cardholder's confirmation that they
+     * authorised this charge, and the portal turns it into a signed PDF the merchant can submit if
+     * the charge is ever disputed.
      *
-     * Optional by design: leaving it unticked must never block the order.
+     * v2.5.6 (client 2026-07-29): MANDATORY, not optional. Ticked by default and it cannot be
+     * cleared — attempting to clear it re-ticks the box and explains why (assets/js/mps-card-
+     * formatting.js on classic, assets/js/mps-blocks.js on Block). `required` is the no-JS backstop:
+     * the browser refuses to submit the form with the box clear.
+     *
+     * Consent is still only recorded when the value is actually posted. A customer who defeats both
+     * the script and the browser validation has visibly refused, and we must not record consent they
+     * did not give — the PDF is dispute evidence and has to be truthful.
      *
      * The billing descriptor is deliberately NOT shown here (client 2026-07-22) — the descriptor is
      * not for public display. It still appears on the generated PDF, where the form requires it as
@@ -156,11 +163,16 @@ abstract class MPS_Base_Gateway extends WC_Payment_Gateway {
         ?>
         <div class="mps-ack-field">
             <label class="mps-ack-label">
-                <input type="checkbox" name="<?php echo $prefix; ?>_charge_ack" value="1" class="mps-ack-checkbox">
+                <input type="checkbox" name="<?php echo $prefix; ?>_charge_ack" value="1" class="mps-ack-checkbox" checked required>
                 <span class="mps-ack-text">
                     <?php esc_html_e('I authorise this charge and confirm my details may be used for a charge acknowledgment.', 'mps-gateway'); ?>
                 </span>
             </label>
+            <?php /* Inline display:none, not the hidden attribute — a theme rule setting display on
+                     this element would otherwise override [hidden] and leak the message. */ ?>
+            <div class="mps-ack-required" role="alert" style="display:none">
+                <?php esc_html_e('This acknowledgment is required to complete your payment.', 'mps-gateway'); ?>
+            </div>
         </div>
         <?php
     }

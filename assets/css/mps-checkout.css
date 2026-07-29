@@ -169,7 +169,7 @@
     color: #b45309;
 }
 
-/* Optional cardholder charge acknowledgment tick-box. */
+/* Mandatory cardholder charge acknowledgment tick-box. */
 .mps-ack-field { margin: 14px 0 2px; }
 .mps-ack-label {
     display: flex;
@@ -188,3 +188,12 @@
     cursor: pointer;
 }
 .mps-ack-text strong { color: #111827; }
+
+/* Shown when the customer tries to clear the mandatory acknowledgment. */
+.mps-ack-required {
+    margin: 6px 0 0 25px;
+    font-size: 12.5px;
+    line-height: 1.45;
+    color: #b91c1c;
+    font-weight: 500;
+}

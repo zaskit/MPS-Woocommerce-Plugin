@@ -142,7 +142,7 @@ abstract class MPS_Base_Gateway extends WC_Payment_Gateway {
 
     /**
      * Cardholder Charge Acknowledgment tick-box. We capture the cardholder's confirmation that they
-     * authorised this charge, and the portal turns it into a signed PDF the merchant can submit if
+     * authorized this charge, and the portal turns it into a signed PDF the merchant can submit if
      * the charge is ever disputed.
      *
      * v2.5.6 (client 2026-07-29): MANDATORY, not optional. Ticked by default and it cannot be
@@ -165,7 +165,7 @@ abstract class MPS_Base_Gateway extends WC_Payment_Gateway {
             <label class="mps-ack-label">
                 <input type="checkbox" name="<?php echo $prefix; ?>_charge_ack" value="1" class="mps-ack-checkbox" checked required>
                 <span class="mps-ack-text">
-                    <?php esc_html_e('I authorise this charge and confirm my details may be used for a charge acknowledgment.', 'mps-gateway'); ?>
+                    <?php esc_html_e('I authorize this charge and confirm my details may be used for a charge acknowledgment.', 'mps-gateway'); ?>
                 </span>
             </label>
             <?php /* Inline display:none, not the hidden attribute — a theme rule setting display on

@@ -79,6 +79,6 @@ class MPS_Blocks_Integration extends AbstractPaymentMethodType {
      * it is not shown publicly (client 2026-07-22); it appears only on the generated PDF.
      */
     private function charge_acknowledgment_text(): string {
-        return esc_html__('I authorise this charge and confirm my details may be used for a charge acknowledgment.', 'mps-gateway');
+        return esc_html__('I authorize this charge and confirm my details may be used for a charge acknowledgment.', 'mps-gateway');
     }
 }

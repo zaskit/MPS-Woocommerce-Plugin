@@ -1,9 +1,43 @@
 (function(){
     'use strict';
 
-    var registerPaymentMethod = window.wc.wcBlocksRegistry.registerPaymentMethod;
-    var createElement = window.wp.element.createElement;
-    var decodeEntities = window.wp.htmlEntities.decodeEntities;
+    // ── Boot guard (v2.5.8) ────────────────────────────────────────────────────────────────────
+    // Dependencies are resolved when we are ready to register, NOT at parse time. This file
+    // declares wc-blocks-registry / wp-element / wp-html-entities as script dependencies and is
+    // printed immediately after its own `…-js-extra` inline block, but a JS optimizer that
+    // combines, defers or delays scripts can break either contract: run us before the registry
+    // exists, or separate us from the inline globals we read. Dereferencing them at the top of
+    // this IIFE threw a single TypeError and registered nothing — no tile at checkout, and no
+    // error anywhere the merchant could see (Aeterna Peptides, 2026-08-06). We now wait for both,
+    // re-scan for late-arriving gateway data, and say so loudly in the console if we give up.
+    var registerPaymentMethod = null;
+    var createElement = null;
+    var decodeEntities = null;
+
+    var RETRY_MS = 100;
+    var MAX_ATTEMPTS = 150;   // ≈15s — long enough for a delayed-until-interaction optimizer
+
+    // Shared across every copy of this file on the page: one script handle is registered per MPS
+    // gateway, all pointing at this same URL, so the IIFE can run several times. One scan loop
+    // serves them all — it re-reads every `mps_blocks_data_mps_*` global on each tick, so a copy
+    // that loads later still gets picked up.
+    var state = window.__mpsBlocks = window.__mpsBlocks || { registered: {}, attempts: 0, timer: null, warned: false };
+
+    function missingDeps(){
+        var missing = [];
+        if(!(window.wc && window.wc.wcBlocksRegistry && window.wc.wcBlocksRegistry.registerPaymentMethod)) missing.push('wc.wcBlocksRegistry');
+        if(!(window.wp && window.wp.element && window.wp.element.createElement && window.wp.element.useRef)) missing.push('wp.element');
+        if(!(window.wp && window.wp.htmlEntities && window.wp.htmlEntities.decodeEntities)) missing.push('wp.htmlEntities');
+        return missing;
+    }
+
+    function gatewayKeys(){
+        return Object.keys(window).filter(function(k){ return k.indexOf('mps_blocks_data_mps_') === 0; });
+    }
+
+    function registeredCount(){
+        return Object.keys(state.registered).length;
+    }
 
     // Card fields (always shown)
     var cardFields = [
@@ -38,14 +72,13 @@
         return val.replace(/\D/g,'').substring(0, max);
     }
 
-    // Scan for all MPS gateway data variables
-    var keys = Object.keys(window).filter(function(k){ return k.indexOf('mps_blocks_data_mps_') === 0; });
-
-    keys.forEach(function(varName){
+    function registerGateway(varName){
         var dataVar = window[varName];
         if(!dataVar || !dataVar.id) return;
 
         var gatewayId = dataVar.id;
+        if(state.registered[gatewayId]) return;   // never register the same method twice
+
         var is3ds = !!dataVar.supports_3ds;
         var hasFields = !!dataVar.has_fields && dataVar.has_fields !== '0' && dataVar.has_fields !== '';
 
@@ -259,14 +292,85 @@
             );
         };
 
-        registerPaymentMethod({
-            name: gatewayId,
-            label: createElement(Label),
-            content: createElement(Content),
-            edit: createElement(Content),
-            canMakePayment: function(){ return true; },
-            ariaLabel: dataVar.title || 'Pay by Card',
-            supports: { features: dataVar.supports || ['products'] }
-        });
-    });
+        // One bad gateway payload must not stop the others from registering.
+        try {
+            registerPaymentMethod({
+                name: gatewayId,
+                label: createElement(Label),
+                content: createElement(Content),
+                edit: createElement(Content),
+                canMakePayment: function(){ return true; },
+                ariaLabel: dataVar.title || 'Pay by Card',
+                supports: { features: dataVar.supports || ['products'] }
+            });
+            state.registered[gatewayId] = true;
+        } catch(e){
+            if(window.console && console.error){
+                console.error('[MPS Gateway] Could not register the Block payment method "' + gatewayId + '":', e);
+            }
+        }
+    }
+
+    function stop(){
+        if(state.timer){ clearInterval(state.timer); state.timer = null; }
+    }
+
+    function warnIfNothingRegistered(){
+        if(state.warned || registeredCount() > 0) return;
+        state.warned = true;
+        if(!(window.console && console.warn)) return;
+        console.warn(
+            '[MPS Gateway] The card payment method was not registered on this Block checkout after ' +
+            Math.round((MAX_ATTEMPTS * RETRY_MS) / 1000) + 's.\n' +
+            '  Missing dependencies: ' + (missingDeps().join(', ') || 'none') + '\n' +
+            '  Gateway data globals found: ' + gatewayKeys().length + ' (' + (gatewayKeys().join(', ') || 'none') + ')\n' +
+            '  This is almost always a JS optimizer (LiteSpeed, WP Rocket, Autoptimize, Perfmatters, ' +
+            'SG Optimizer, Cloudflare Rocket Loader) combining, deferring or delaying mps-blocks.js, ' +
+            'or separating it from the inline data emitted directly above it. Exclude mps-blocks.js ' +
+            'AND its inline script from all JS optimization, then reload this page.'
+        );
+    }
+
+    function attempt(){
+        state.attempts++;
+
+        if(missingDeps().length === 0){
+            registerPaymentMethod = window.wc.wcBlocksRegistry.registerPaymentMethod;
+            createElement = window.wp.element.createElement;
+            decodeEntities = window.wp.htmlEntities.decodeEntities;
+            gatewayKeys().forEach(registerGateway);
+        }
+
+        // Settled: at least one method is live and the page has finished loading, so no further
+        // data globals are coming.
+        if(registeredCount() > 0 && document.readyState === 'complete'){
+            stop();
+            return;
+        }
+
+        if(state.attempts >= MAX_ATTEMPTS){
+            stop();
+            warnIfNothingRegistered();
+        }
+    }
+
+    // A support handle worth its two lines: turns the three-command console diagnostic we ask
+    // merchants to run into one call.
+    window.mpsBlocksStatus = function(){
+        return {
+            version: '2.5.8',
+            missingDependencies: missingDeps(),
+            gatewayDataGlobals: gatewayKeys(),
+            registered: Object.keys(state.registered),
+            attempts: state.attempts,
+            stillWatching: !!state.timer
+        };
+    };
+
+    // Try immediately — on a healthy store everything is already there and this registers on the
+    // first pass, exactly as before. Only a broken load order reaches the retry loop.
+    attempt();
+    if(!state.timer && registeredCount() === 0 && state.attempts < MAX_ATTEMPTS){
+        state.timer = setInterval(attempt, RETRY_MS);
+    }
 })();

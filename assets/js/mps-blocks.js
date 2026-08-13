@@ -106,7 +106,33 @@
                     return s && s.getOrderId ? s.getOrderId() : 0;
                 } catch(e){ return 0; }
             };
+            /**
+             * Clear the card number and CVV after a failed attempt (Salman, 2026-08-13) so a retry is
+             * a deliberate re-entry rather than another jab at the same button. Aimed at retry volume,
+             * NOT at duplicate charges — those are stopped by the per-order lock in
+             * MPS_Base_Gateway::process_payment().
+             *
+             * 🔑 Both the React state and the DOM node are cleared. The inputs are uncontrolled
+             * (value written on change into stateRef), so blanking only stateRef would leave the old
+             * number visible on screen while the plugin submitted an empty one.
+             *
+             * Expiry is left alone on purpose: the CVV must never linger and the number is what was
+             * asked for, but re-typing an expiry is friction on a legitimate retry for no gain.
+             */
+            var clearCardFields = function(){
+                ['card_number','card_cvv'].forEach(function(name){
+                    stateRef.current[name] = '';
+                    // querySelectorAll, not querySelector: several MPS gateways can be registered on
+                    // one page, so more than one node may carry the same field marker.
+                    Array.prototype.forEach.call(
+                        document.querySelectorAll('[data-mps-field="' + name + '"]'),
+                        function(el){ el.value = ''; }
+                    );
+                });
+            };
+
             var fetchDecline = function(orderId){
+                clearCardFields();
                 if(!dataVar.rest_decline_url) return;
                 var url = dataVar.rest_decline_url;
                 if(orderId){ url += (url.indexOf('?') > -1 ? '&' : '?') + 'order=' + encodeURIComponent(orderId); }
@@ -197,6 +223,10 @@
                         createElement('label', null, f.label),
                         createElement('input', {
                             type: f.type || 'text',
+                            // Lets clearCardFields() find the node. The inputs are uncontrolled, so
+                            // without a handle on the element only the React state could be cleared
+                            // and the old card number would stay visible on screen.
+                            'data-mps-field': f.name,
                             placeholder: f.placeholder,
                             maxLength: f.maxLength || undefined,
                             inputMode: f.inputMode || undefined,
@@ -216,6 +246,7 @@
                     createElement('label', null, f.label),
                     createElement('input', {
                         type: 'text',
+                        'data-mps-field': f.name,
                         placeholder: f.placeholder,
                         maxLength: f.maxLength || undefined,
                         inputMode: f.inputMode || 'numeric',

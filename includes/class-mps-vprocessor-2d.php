@@ -8,7 +8,7 @@ class MPS_VProcessor_2D extends MPS_Base_Gateway {
         $this->supports[] = 'refunds';
     }
 
-    public function process_payment($order_id): array {
+    protected function process_payment_inner($order_id): array {
         $order = wc_get_order($order_id);
         $card  = $this->get_card_data();
 

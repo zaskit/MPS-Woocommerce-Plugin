@@ -2,7 +2,7 @@
 /**
  * Plugin Name: MPS Gateway
  * Description: Connect your WooCommerce store to MPS Gateway for multi-processor payment processing. Transactions go directly to processors; the portal manages configuration.
- * Version: 2.5.8
+ * Version: 2.6.0
  * Author: ZASK
  * Author URI: https://zask.it
  * Requires at least: 6.0
@@ -32,7 +32,7 @@ if (defined('MPS_PLUGIN_FILE')) {
 
 define('MPS_PLUGIN_FILE', __FILE__);
 define('MPS_PLUGIN_DIR', plugin_dir_path(__FILE__));
-define('MPS_PLUGIN_VERSION', '2.5.8');
+define('MPS_PLUGIN_VERSION', '2.6.0');
 
 // HPOS compatibility
 add_action('before_woocommerce_init', function() {
@@ -374,6 +374,14 @@ add_action('plugins_loaded', function() {
         wp_enqueue_style('mps-checkout-css', plugin_dir_url(__FILE__) . 'assets/css/mps-checkout.css', [], MPS_PLUGIN_VERSION);
         wp_enqueue_script('mps-card-formatting', plugin_dir_url(__FILE__) . 'assets/js/mps-card-formatting.js', ['jquery'], MPS_PLUGIN_VERSION, true);
         wp_enqueue_script('mps-ep3d-checkout-poll', plugin_dir_url(__FILE__) . 'assets/js/mps-ep3d-checkout-poll.js', ['jquery'], MPS_PLUGIN_VERSION, true);
+
+        // Duplicate-submit guard (v2.6.0). Classic checkout only — Block checkout's Place Order
+        // button is owned by WC Blocks, which disables it while the request is in flight; the card
+        // clearing for that path lives in mps-blocks.js.
+        wp_enqueue_script('mps-checkout-guard', plugin_dir_url(__FILE__) . 'assets/js/mps-checkout-guard.js', ['jquery'], MPS_PLUGIN_VERSION, true);
+        wp_localize_script('mps-checkout-guard', 'mps_guard_i18n', [
+            'processing' => __('Processing…', 'mps-gateway'),
+        ]);
     });
 
     // Polling JS on thank-you page

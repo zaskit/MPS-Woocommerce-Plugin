@@ -243,6 +243,8 @@ class MPS_Monitor_Ledger {
 					SUM(outcome = 'declined' AND recovered = 0) AS lost,
 					SUM(CASE WHEN outcome = 'declined' AND recovered = 0 THEN amount ELSE 0 END) AS lost_value,
 					SUM(CASE WHEN outcome = 'approved' THEN amount ELSE 0 END) AS paid_value,
+					SUM(outcome = 'blocked') AS blocked,
+					SUM(CASE WHEN outcome = 'blocked' THEN amount ELSE 0 END) AS blocked_value,
 					SUM(notify_state = 'sent') AS notified,
 					COUNT(DISTINCT CASE WHEN outcome = 'declined' THEN billing_email END) AS customers
 				FROM {$table} WHERE created_at >= %s{$sc}",
@@ -251,7 +253,14 @@ class MPS_Monitor_Ledger {
 			ARRAY_A
 		);
 
-		$row              = array_map( 'floatval', (array) $row );
+		$row = array_map( 'floatval', (array) $row );
+
+		/*
+		 * Blocked attempts are deliberately NOT in the denominator. They never reached a processor,
+		 * so they are neither an approval nor a decline — counting them as attempts would make the
+		 * decline rate fall simply because the feature is working, which flatters the number
+		 * without telling anyone anything true. They are reported on their own instead.
+		 */
 		$attempts         = $row['approved'] + $row['declined'];
 		$row['attempts']  = $attempts;
 		$row['fail_rate'] = $attempts > 0 ? round( 100 * $row['declined'] / $attempts, 1 ) : 0.0;
@@ -294,6 +303,7 @@ class MPS_Monitor_Ledger {
 					SUM(outcome = 'declined' AND recovered = 1) AS recovered,
 					SUM(notify_state = 'sent') AS emailed,
 					SUM(outcome = 'approved') AS approved,
+					SUM(outcome = 'blocked') AS blocked,
 					COUNT(*) AS everything
 				FROM " . self::table() . " WHERE created_at >= %s{$sc}",
 				$since

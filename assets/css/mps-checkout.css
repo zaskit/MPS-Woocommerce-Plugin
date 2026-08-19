@@ -217,3 +217,23 @@
 .mps-monitor-disclosure ul { margin: 0; padding-left: 19px; }
 .mps-monitor-disclosure li { margin-bottom: 6px; }
 .mps-monitor-disclosure li:last-child { margin-bottom: 0; }
+
+/* ── Blocked BIN notice ───────────────────────────────────────────────────────
+   Shown under the card number as soon as a BIN the processor never approves is
+   typed, on both checkouts. Styled like a final decline, because it is one —
+   the difference is that no charge was ever attempted. */
+.mps-bin-blocked {
+    margin: 8px 0 0;
+    padding: 10px 12px;
+    background: #fef2f2;
+    border: 1px solid #fecaca;
+    border-left: 4px solid #b91c1c;
+    border-radius: 6px;
+    font-size: 13.5px;
+    line-height: 1.5;
+    color: #7f1d1d;
+}
+.mps-card-form input.mps-input-error,
+.wc-block-components-text-input input.mps-input-error {
+    border-color: #b91c1c;
+}

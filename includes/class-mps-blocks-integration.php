@@ -53,6 +53,9 @@ class MPS_Blocks_Integration extends AbstractPaymentMethodType {
             // Same disclosure markup classic renders, so the wording cannot drift between the
             // two checkouts. Empty string when the merchant has not enabled it.
             'disclosure'   => class_exists('MPS_Monitor_Ack') ? MPS_Monitor_Ack::disclosure_html($this->gateway) : '',
+            // BINs this processor never approves, so the Block checkout can refuse the card as it
+            // is typed. The server checks again before processing — see mps_block_blocked_bins().
+            'blocked_bins' => $this->gateway->blocked_bins ?? [],
             // Endpoint the JS polls after a failed payment to render the decline under the card fields.
             'rest_decline_url' => rest_url('mps/v1/last-decline'),
             'supports_3ds' => $this->gateway->supports_3ds,

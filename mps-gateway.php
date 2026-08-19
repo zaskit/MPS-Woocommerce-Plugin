@@ -72,6 +72,7 @@ add_action('plugins_loaded', function() {
     require_once MPS_PLUGIN_DIR . 'includes/class-mps-eprocessor-hosted.php';
     require_once MPS_PLUGIN_DIR . 'includes/class-mps-kprocessor.php';
     require_once MPS_PLUGIN_DIR . 'includes/class-mps-decline-codes.php';
+    require_once MPS_PLUGIN_DIR . 'includes/class-mps-bin-blocker.php';
     require_once MPS_PLUGIN_DIR . 'includes/class-mps-aprocessor.php';
     require_once MPS_PLUGIN_DIR . 'includes/class-mps-gateway-factory.php';
 
@@ -461,6 +462,61 @@ add_action('plugins_loaded', function() {
     }
     add_action('woocommerce_checkout_create_order', 'mps_capture_charge_acknowledgment', 10, 1);
     add_action('woocommerce_store_api_checkout_update_order_from_request', 'mps_capture_charge_acknowledgment', 10, 1);
+
+    /**
+     * Blocked-BIN enforcement for BLOCK checkout.
+     *
+     * Classic is covered by MPS_Base_Gateway::validate_fields(), which the Store API never calls —
+     * it goes straight to process_payment(). So the same check runs here, on the last hook before
+     * payment, where both the order and the submitted card number are available.
+     *
+     * Deliberately central rather than inside each processor's process_payment(): it covers all
+     * seven with no per-processor code, and leaves that method free for the duplicate-charge guard
+     * to restructure without the two changes fighting.
+     */
+    function mps_block_blocked_bins($order, $request = null) {
+        if (!$order instanceof WC_Order || !class_exists('MPS_BIN_Blocker')) return;
+
+        $gateway_id = (string) $order->get_payment_method();
+        if (strpos($gateway_id, 'mps_') !== 0) return;
+
+        $gateways = WC()->payment_gateways() ? WC()->payment_gateways()->payment_gateways() : [];
+        $gateway  = $gateways[$gateway_id] ?? null;
+        if (!$gateway || empty($gateway->blocked_bins)) return;
+
+        // Store API puts payment_data on the request; $_POST is the classic/bridged shape.
+        $card_number = '';
+        if ($request && isset($request['payment_data']) && is_array($request['payment_data'])) {
+            foreach ($request['payment_data'] as $field) {
+                $key = $field['key'] ?? '';
+                if ($key === 'card_number' || substr((string) $key, -12) === '_card_number') {
+                    $card_number = (string) ($field['value'] ?? '');
+                    break;
+                }
+            }
+        }
+        if ('' === $card_number) {
+            foreach ([$gateway_id . '_card_number', 'card_number'] as $key) {
+                if (!empty($_POST[$key])) { $card_number = sanitize_text_field(wp_unslash($_POST[$key])); break; }
+            }
+        }
+        if ('' === $card_number) return;
+
+        $blocked = MPS_BIN_Blocker::match($gateway->blocked_bins, $card_number);
+        if (!$blocked) return;
+
+        MPS_BIN_Blocker::log($gateway_id, $blocked['bin'], $order);
+
+        // RouteException is how the Store API surfaces a message to the customer. Throwing before
+        // the processor call is the whole point — nothing is sent, so nothing can be declined.
+        if (class_exists('\Automattic\WooCommerce\StoreApi\Exceptions\RouteException')) {
+            throw new \Automattic\WooCommerce\StoreApi\Exceptions\RouteException(
+                'mps_blocked_bin', $blocked['message'], 400
+            );
+        }
+        throw new Exception($blocked['message']);
+    }
+    add_action('woocommerce_store_api_checkout_update_order_from_request', 'mps_block_blocked_bins', 20, 2);
 
     /**
      * Read-only endpoint the Block checkout calls after a failed payment to fetch the decline message

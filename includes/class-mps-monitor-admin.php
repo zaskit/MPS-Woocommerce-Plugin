@@ -67,6 +67,12 @@ class MPS_Monitor_Admin {
 				'query' => array( 'outcome' => 'all', 'notify_state' => 'sent' ),
 				'hint'  => 'Customers who have actually been sent a decline notice.',
 			),
+			'blocked'   => array(
+				'label' => 'Blocked before processing',
+				'count' => 'blocked',
+				'query' => array( 'outcome' => 'blocked' ),
+				'hint'  => 'Cards refused at checkout because the processor never approves that BIN. These never reached a processor, so they are not declines — this is the decline that did not happen.',
+			),
 			'approved'  => array(
 				'label' => 'Approved',
 				'count' => 'approved',
@@ -266,7 +272,12 @@ class MPS_Monitor_Admin {
 						</td>
 						<td class="num"><?php echo wp_kses_post( wc_price( $row->amount, array( 'currency' => $row->currency ) ) ); ?></td>
 						<td>
-							<span class="mps-monitor-pill mps-monitor-pill--<?php echo 'approved' === $row->outcome ? 'ok' : 'fail'; ?>"><?php echo esc_html( ucfirst( $row->outcome ) ); ?></span>
+							<?php
+							$tone = 'fail';
+							if ( 'approved' === $row->outcome ) { $tone = 'ok'; }
+							elseif ( 'blocked' === $row->outcome ) { $tone = 'warn'; }
+							?>
+							<span class="mps-monitor-pill mps-monitor-pill--<?php echo esc_attr( $tone ); ?>"><?php echo esc_html( ucfirst( $row->outcome ) ); ?></span>
 						</td>
 						<td>
 							<?php if ( 'declined' === $row->outcome ) : ?>
@@ -337,6 +348,8 @@ class MPS_Monitor_Admin {
 				self::card( 'Recovered after decline', number_format_i18n( $stats['recovered'] ), $stats['recovery_rate'] . '% of declines', 'good' );
 				self::card( 'Lost', number_format_i18n( $stats['lost'] ), wc_price( $stats['lost_value'] ) . ' not collected', 'bad' );
 				self::card( 'Customers emailed', number_format_i18n( $stats['notified'] ), $stats['customers'] . ' distinct customers declined' );
+				// Not part of the attempt figures above — see the note in MPS_Monitor_Ledger::stats().
+				self::card( 'Blocked before processing', number_format_i18n( $stats['blocked'] ), 'declines prevented', 'good' );
 				?>
 			</div>
 

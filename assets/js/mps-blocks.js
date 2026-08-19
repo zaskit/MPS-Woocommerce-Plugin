@@ -93,6 +93,12 @@
             var stateRef = window.wp.element.useRef(dataVar.ack_text ? {charge_ack:'1'} : {});
             var ackBlockedState = window.wp.element.useState(false);
             var ackBlocked = ackBlockedState[0], setAckBlocked = ackBlockedState[1];
+            // Blocked BIN typed into the card field. Immediate feedback only — the server checks
+            // the same list again before processing (mps_block_blocked_bins), so a broken script
+            // costs the instant message, not the protection.
+            var binBlockState = window.wp.element.useState(null);
+            var binBlocked = binBlockState[0], setBinBlocked = binBlockState[1];
+
             var declineState = window.wp.element.useState(null);
             var decline = declineState[0], setDecline = declineState[1];
             var declineMsg = decline ? decline.message : '';
@@ -162,6 +168,18 @@
                     for(var key in s){
                         paymentData[key] = s[key] || '';
                     }
+
+                    // Refuse to submit a card the processor will never approve. Read off the ref,
+                    // not component state, so this is the value in the field right now rather than
+                    // whatever it was when this callback was subscribed.
+                    var blockedHit = matchBlockedBin(s.card_number);
+                    if(blockedHit){
+                        return {
+                            type: emitResponse.responseTypes.ERROR,
+                            message: blockedHit.message || 'This card cannot be used on this store. Please try a different card.'
+                        };
+                    }
+
                     return {
                         type: emitResponse.responseTypes.SUCCESS,
                         meta: { paymentMethodData: paymentData }
@@ -179,6 +197,18 @@
                 };
             }
 
+            // Longest-first, as the portal sends them, so a specific 8-digit rule wins over a
+            // broad 6-digit one covering the same range.
+            var matchBlockedBin = function(value){
+                var rules = dataVar.blocked_bins || [];
+                var digits = String(value || '').replace(/\D/g, '');
+                for(var i = 0; i < rules.length; i++){
+                    var bin = String(rules[i].bin || '').replace(/\D/g, '');
+                    if(bin && digits.length >= bin.length && digits.indexOf(bin) === 0){ return rules[i]; }
+                }
+                return null;
+            };
+
             var elements = [];
 
             // Description
@@ -192,6 +222,16 @@
             cardFields.forEach(function(f, i){
                 var fmt = null;
                 if(f.name === 'card_number') fmt = formatCardNumber;
+                var onFieldChange = handleChange(f.name, fmt);
+                if(f.name === 'card_number'){
+                    var inner = onFieldChange;
+                    onFieldChange = function(e){
+                        var v = e && e.target ? e.target.value : '';
+                        var hit = matchBlockedBin(v);
+                        setBinBlocked(hit ? (hit.message || 'This card cannot be used on this store. Please try a different card.') : null);
+                        return inner(e);
+                    };
+                }
                 elements.push(
                     createElement('div', {key:'f'+i, className:'mps-field'},
                         createElement('label', null, f.label),
@@ -201,10 +241,15 @@
                             maxLength: f.maxLength || undefined,
                             inputMode: f.inputMode || undefined,
                             autoComplete: f.autocomplete || undefined,
-                            onChange: handleChange(f.name, fmt)
+                            onChange: onFieldChange
                         })
                     )
                 );
+                if(f.name === 'card_number' && binBlocked){
+                    elements.push(createElement('div', {
+                        key: 'binblock', className: 'mps-bin-blocked', role: 'alert'
+                    }, binBlocked));
+                }
             });
 
             // Row fields (expiry + CVV)

@@ -14,6 +14,8 @@ abstract class MPS_Base_Gateway extends WC_Payment_Gateway {
     public    float  $fee_percentage;
     protected array  $allowed_cards;
     public    string $portal_descriptor;
+    /** BINs this processor will never approve, longest-first, from the portal. */
+    public    array  $blocked_bins;
 
     public function __construct(array $gateway_config) {
         $this->portal_gateway_id = (int) ($gateway_config['id'] ?? 0);
@@ -27,6 +29,7 @@ abstract class MPS_Base_Gateway extends WC_Payment_Gateway {
         $this->fee_label         = $gateway_config['fee_label'] ?? 'Handling Fee';
         $this->allowed_cards     = $gateway_config['allowed_cards'] ?? $this->supported_cards;
         $this->portal_descriptor = $gateway_config['descriptor'] ?? '';
+        $this->blocked_bins      = is_array($gateway_config['blocked_bins'] ?? null) ? $gateway_config['blocked_bins'] : [];
 
         // Gateway ID: mps_{code}_{type}_{portal_id}
         $this->id = 'mps_' . $this->processor_code . '_' . $this->processor_type . '_' . $this->portal_gateway_id;
@@ -107,7 +110,12 @@ abstract class MPS_Base_Gateway extends WC_Payment_Gateway {
             </div>
             <div class="mps-field">
                 <label>Card Number</label>
-                <input type="text" name="<?php echo $prefix; ?>_card_number" inputmode="numeric" maxlength="23" placeholder="0000 0000 0000 0000" autocomplete="cc-number" data-mc-only="<?php echo $mc_only ? '1' : '0'; ?>" required>
+                <?php /* data-blocked-bins lets the browser refuse a known-bad card as it is typed,
+                          with no request. It is only a BIN list — no customer data — and the server
+                          checks again in validate_fields() regardless, so a stripped or broken
+                          script costs nothing but the instant feedback. */ ?>
+                <input type="text" name="<?php echo $prefix; ?>_card_number" inputmode="numeric" maxlength="23" placeholder="0000 0000 0000 0000" autocomplete="cc-number" data-mc-only="<?php echo $mc_only ? '1' : '0'; ?>" data-blocked-bins="<?php echo esc_attr(wp_json_encode($this->blocked_bins)); ?>" required>
+                <div class="mps-bin-blocked" role="alert" style="display:none"></div>
             </div>
             <div class="mps-row">
                 <div class="mps-field">
@@ -210,6 +218,15 @@ abstract class MPS_Base_Gateway extends WC_Payment_Gateway {
         $card_number = preg_replace('/\D/', '', $this->post_field('card_number'));
         $expiry = $this->post_field('card_expiry');
         $cvv = preg_replace('/\D/', '', $this->post_field('card_cvv'));
+
+        // Blocked BIN first: if this card can never be approved, telling the customer that is more
+        // useful than telling them the CVV is missing, and there is no point validating the rest.
+        $blocked = MPS_BIN_Blocker::match($this->blocked_bins, $card_number);
+        if ($blocked) {
+            MPS_BIN_Blocker::log($this->id, $blocked['bin']);
+            wc_add_notice($blocked['message'], 'error');
+            return false;
+        }
 
         if (empty($card_name)) $errors[] = 'Cardholder name is required.';
 

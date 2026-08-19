@@ -162,6 +162,15 @@ abstract class MPS_Base_Gateway extends WC_Payment_Gateway {
         $prefix = esc_attr($this->id);
         ?>
         <div class="mps-ack-field">
+            <?php
+            /* Card-payment disclosure, when the merchant has enabled it. Deliberately INSIDE
+               .mps-ack-field and above the label: the customer should read what the payment
+               involves before ticking the box that says they authorize it. Same string feeds
+               Block checkout via MPS_Blocks_Integration, so the two cannot drift apart. */
+            if (class_exists('MPS_Monitor_Ack')) {
+                echo MPS_Monitor_Ack::disclosure_html($this); // phpcs:ignore WordPress.Security.EscapeOutput
+            }
+            ?>
             <label class="mps-ack-label">
                 <input type="checkbox" name="<?php echo $prefix; ?>_charge_ack" value="1" class="mps-ack-checkbox" checked required>
                 <span class="mps-ack-text">

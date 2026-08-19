@@ -53,6 +53,23 @@ class MPS_Decline_Codes {
         return self::RETRY_OTHER;
     }
 
+    /**
+     * Is this code actually listed on the client's sheet?
+     *
+     * classify() answers RETRY_OTHER both for codes the sheet marks GREY and for codes it has
+     * never heard of, which is right for the checkout notice — the safe generic covers both. The
+     * decline EMAIL needs to tell them apart: where the sheet has ruled, the sheet wins; where it
+     * is silent, the email may fall back to the ISO 8583 response code for something better than
+     * a shrug. This exists so that distinction can be made without exposing the arrays.
+     */
+    public static function is_known(string $code): bool {
+        $code = trim($code);
+        return in_array($code, self::$do_not_retry, true)
+            || in_array($code, self::$contact_issuer, true)
+            || in_array($code, self::$verify_card, true)
+            || in_array($code, self::$retry_other, true);
+    }
+
     /** The message shown to the customer under the card fields. Wording is the client's. */
     public static function message(string $code): string {
         switch (self::classify($code)) {

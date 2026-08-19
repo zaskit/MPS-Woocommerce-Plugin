@@ -244,7 +244,16 @@
             // held ticked: `checked` is a fixed prop, so React re-renders it ticked however the
             // customer clicks it, and we explain why instead of silently ignoring the click.
             if(dataVar.ack_text){
-                var ackChildren = [
+                var ackChildren = [];
+                // Disclosure first, so it is read before the box that authorizes the charge.
+                // Same markup classic checkout renders — see MPS_Monitor_Ack::disclosure_html().
+                if(dataVar.disclosure){
+                    ackChildren.push(createElement('div', {
+                        key:'disclosure',
+                        dangerouslySetInnerHTML:{ __html: dataVar.disclosure }
+                    }));
+                }
+                ackChildren.push(
                     createElement('label', {key:'lbl', className:'mps-ack-label'},
                         createElement('input', {
                             type:'checkbox',
@@ -260,7 +269,7 @@
                             dangerouslySetInnerHTML:{ __html: dataVar.ack_text }
                         })
                     )
-                ];
+                );
                 if(ackBlocked){
                     ackChildren.push(createElement('div', {
                         key:'req', className:'mps-ack-required', role:'alert'

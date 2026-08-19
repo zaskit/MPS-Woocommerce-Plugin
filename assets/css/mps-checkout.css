@@ -197,3 +197,23 @@
     color: #b91c1c;
     font-weight: 500;
 }
+
+/* ── Card-payment disclosure (Transaction Monitor) ────────────────────────────
+   Sits directly above the charge-acknowledgment tick-box on both checkouts, so
+   the customer reads what they are agreeing to before they agree to it.
+   Rendered only when the merchant enables the disclosure. */
+.mps-monitor-disclosure {
+    margin: 0 0 12px;
+    padding: 13px 15px;
+    background: #fffbeb;
+    border: 1px solid #fcd34d;
+    border-left: 5px solid #f59e0b;
+    border-radius: 8px;
+    font-size: 13.5px;
+    line-height: 1.55;
+    color: #451a03;
+}
+.mps-monitor-disclosure__intro { margin: 0 0 8px; font-weight: 600; }
+.mps-monitor-disclosure ul { margin: 0; padding-left: 19px; }
+.mps-monitor-disclosure li { margin-bottom: 6px; }
+.mps-monitor-disclosure li:last-child { margin-bottom: 0; }

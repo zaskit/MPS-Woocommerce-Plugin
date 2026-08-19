@@ -75,6 +75,32 @@ add_action('plugins_loaded', function() {
     require_once MPS_PLUGIN_DIR . 'includes/class-mps-aprocessor.php';
     require_once MPS_PLUGIN_DIR . 'includes/class-mps-gateway-factory.php';
 
+    // ─── Transaction Monitor ───
+    // Per-attempt ledger, decline-reason dashboard and the customer decline email. Loaded after
+    // MPS_Decline_Codes, which owns the classification the monitor's copy is keyed to.
+    require_once MPS_PLUGIN_DIR . 'includes/class-mps-monitor-ledger.php';
+    require_once MPS_PLUGIN_DIR . 'includes/class-mps-monitor-copy.php';
+    require_once MPS_PLUGIN_DIR . 'includes/class-mps-monitor-capture.php';
+    require_once MPS_PLUGIN_DIR . 'includes/class-mps-monitor-notifier.php';
+    require_once MPS_PLUGIN_DIR . 'includes/class-mps-monitor-ack.php';
+
+    // The table is created on activation, but an update delivered by the self-updater never fires
+    // the activation hook, so the stored schema version is checked on every load instead. Gated on
+    // the master switch: a merchant who never enables the monitor gets no table on their database.
+    if (MPS_Monitor_Notifier::is_enabled()
+        && (int) get_option('mps_monitor_ledger_version') < MPS_Monitor_Ledger::VERSION) {
+        MPS_Monitor_Ledger::install();
+    }
+
+    MPS_Monitor_Capture::init();
+    MPS_Monitor_Notifier::init();
+    MPS_Monitor_Ack::init();
+
+    if (is_admin()) {
+        require_once MPS_PLUGIN_DIR . 'includes/class-mps-monitor-admin.php';
+        MPS_Monitor_Admin::init();
+    }
+
     // Register dynamic gateways with WooCommerce
     add_filter('woocommerce_payment_gateways', [MPS_Gateway_Factory::class, 'register']);
 

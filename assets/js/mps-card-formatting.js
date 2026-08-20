@@ -69,7 +69,7 @@
      * Deliberately one generic message: the fix is the same whichever test failed, and naming the
      * failing test would tell a card tester which digit to change.
      */
-    var MPS_CARD_MESSAGE = 'Please check the card number and enter it again.';
+    var MPS_CARD_MESSAGE = "That card number doesn't look right. Please check the digits and try again.";
 
     // PAN lengths each scheme issues. Derived from mpsScheme() so the ranges live in ONE place.
     var MPS_SCHEME_LENGTHS = {

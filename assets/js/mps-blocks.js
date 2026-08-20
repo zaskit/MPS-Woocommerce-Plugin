@@ -79,7 +79,7 @@
      * Block checkout never calls validate_fields(), so on a Blocks store this and the Store API
      * guard are the whole of the card validation.
      */
-    var MPS_CARD_MESSAGE = 'Please check the card number and enter it again.';
+    var MPS_CARD_MESSAGE = "That card number doesn't look right. Please check the digits and try again.";
 
     var SCHEME_LABELS = {
         visa:'Visa', mastercard:'Mastercard', amex:'American Express',

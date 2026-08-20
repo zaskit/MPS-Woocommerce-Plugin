@@ -119,9 +119,11 @@ class MPS_Card_Validator {
     /**
      * The reason this card number cannot be a card, or null if it survives every check.
      *
-     * One deliberately generic message for every failure: the customer's fix is the same in all
-     * cases (re-type the number), and naming which test failed would tell a card tester which digit
-     * to change.
+     * One message for every failure, because the customer's fix is the same in all cases: look at
+     * the number and correct it. It names the CARD NUMBER as the problem — "please check the card
+     * number and enter it again" (v2.5.9) was too vague, and read as the site misbehaving or the
+     * card being refused (Salman, 2026-08-20). Saying the digits are wrong tells a card tester
+     * nothing: Luhn and the scheme lengths are public and computable offline.
      */
     public static function error(string $card_number): ?string {
         $pan = self::digits($card_number);
@@ -130,7 +132,7 @@ class MPS_Card_Validator {
             return __('Card number is required.', 'mps-gateway');
         }
 
-        $generic = __('Please check the card number and enter it again.', 'mps-gateway');
+        $generic = __('That card number doesn\'t look right. Please check the digits and try again.', 'mps-gateway');
 
         // No PAN is shorter than 12 or longer than 19, whatever the scheme.
         if (strlen($pan) < 12 || strlen($pan) > 19) {

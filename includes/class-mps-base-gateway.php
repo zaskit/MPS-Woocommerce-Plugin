@@ -114,7 +114,7 @@ abstract class MPS_Base_Gateway extends WC_Payment_Gateway {
                           with no request. It is only a BIN list — no customer data — and the server
                           checks again in validate_fields() regardless, so a stripped or broken
                           script costs nothing but the instant feedback. */ ?>
-                <input type="text" name="<?php echo $prefix; ?>_card_number" inputmode="numeric" maxlength="23" placeholder="0000 0000 0000 0000" autocomplete="cc-number" data-mc-only="<?php echo $mc_only ? '1' : '0'; ?>" data-blocked-bins="<?php echo esc_attr(wp_json_encode($this->blocked_bins)); ?>" required>
+                <input type="text" name="<?php echo $prefix; ?>_card_number" inputmode="numeric" maxlength="23" placeholder="0000 0000 0000 0000" autocomplete="cc-number" data-mc-only="<?php echo $mc_only ? '1' : '0'; ?>" data-allowed-cards="<?php echo esc_attr(wp_json_encode(array_values($allowed))); ?>" data-blocked-bins="<?php echo esc_attr(wp_json_encode($this->blocked_bins)); ?>" required>
                 <div class="mps-bin-blocked" role="alert" style="display:none"></div>
             </div>
             <div class="mps-row">
@@ -236,9 +236,14 @@ abstract class MPS_Base_Gateway extends WC_Payment_Gateway {
         $card_error = MPS_Card_Validator::error($card_number);
         if ($card_error) {
             $errors[] = $card_error;
-        } elseif ($this->environment === 'live' && !$this->validate_card_brand($card_number)) {
-            $brands = implode(' or ', array_map('ucfirst', $this->get_allowed_cards()));
-            $errors[] = "Only {$brands} is accepted on this gateway.";
+        } else {
+            // Scheme allow-list, from the portal. No longer skipped outside live: a sandbox that
+            // accepts brands the live MID refuses is a test bed that lies about the thing being
+            // tested — and an Amex on a Visa/Mastercard MID never approves anywhere.
+            $brand_error = MPS_Card_Validator::brand_error($card_number, $this->get_allowed_cards());
+            if ($brand_error) {
+                $errors[] = $brand_error;
+            }
         }
 
         // Expiry

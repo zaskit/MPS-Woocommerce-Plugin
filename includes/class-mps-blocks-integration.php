@@ -56,6 +56,9 @@ class MPS_Blocks_Integration extends AbstractPaymentMethodType {
             // BINs this processor never approves, so the Block checkout can refuse the card as it
             // is typed. The server checks again before processing — see mps_block_blocked_bins().
             'blocked_bins' => $this->gateway->blocked_bins ?? [],
+            // Card schemes this merchant accepts (portal allowed_cards). Block checkout had no
+            // brand awareness at all before v2.5.9 — client or server.
+            'allowed_cards' => method_exists($this->gateway, 'get_allowed_cards') ? $this->gateway->get_allowed_cards() : [],
             // Endpoint the JS polls after a failed payment to render the decline under the card fields.
             'rest_decline_url' => rest_url('mps/v1/last-decline'),
             'supports_3ds' => $this->gateway->supports_3ds,

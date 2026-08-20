@@ -156,6 +156,51 @@ class MPS_Card_Validator {
     }
 
     /**
+     * The reason this card's scheme is not accepted here, or null.
+     *
+     * MPS runs Visa and Mastercard only (Salman, 2026-08-20); the portal states it per merchant in
+     * allowed_cards. An Amex on a Visa/Mastercard MID is not a decline waiting to happen — it is a
+     * guaranteed failure: the processor's own report shows every Amex and Discover attempt across
+     * their three MIDs ending in Error or Format Error, none approved.
+     *
+     * 🛑 An UNRECOGNISED range is allowed through. Refusing what we cannot identify would decline
+     * good cards from ranges issued after this code was written; the processor still gets the final
+     * say. Only a scheme we positively recognise and do not accept is refused.
+     */
+    public static function brand_error(string $card_number, array $allowed): ?string {
+        $scheme = self::scheme($card_number);
+        if (null === $scheme) {
+            return null;
+        }
+
+        $allowed = array_values(array_filter(array_map('strtolower', $allowed)));
+        if (! $allowed || in_array($scheme, $allowed, true)) {
+            return null;
+        }
+
+        $names = [];
+        foreach ($allowed as $key) {
+            $names[] = self::SCHEMES[$key]['label'] ?? ucfirst($key);
+        }
+
+        return sprintf(
+            /* translators: %s: list of accepted card brands, e.g. "Visa and Mastercard" */
+            __('Only %s are accepted here. Please use a different card.', 'mps-gateway'),
+            self::join_names($names)
+        );
+    }
+
+    /** "Visa and Mastercard", "Visa, Mastercard and Discover". */
+    private static function join_names(array $names): string {
+        if (count($names) <= 1) {
+            return (string) reset($names);
+        }
+        $last = array_pop($names);
+
+        return implode(', ', $names) . ' ' . __('and', 'mps-gateway') . ' ' . $last;
+    }
+
+    /**
      * The reason this CVV cannot belong to this card, or null.
      *
      * Amex uses 4 digits, everything else 3. When the scheme is unknown, accept either rather than

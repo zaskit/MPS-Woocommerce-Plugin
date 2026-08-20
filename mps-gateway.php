@@ -525,6 +525,18 @@ add_action('plugins_loaded', function() {
         if ('' === $card_number) return;
 
         $error = MPS_Card_Validator::error($card_number);
+
+        if (!$error) {
+            // Scheme allow-list. Block checkout never ran this at all — validate_fields() is where
+            // it used to live — so an Amex on a Visa/Mastercard MID went to the processor and came
+            // back as an Error.
+            $gateways = WC()->payment_gateways() ? WC()->payment_gateways()->payment_gateways() : [];
+            $gateway  = $gateways[$gateway_id] ?? null;
+            if ($gateway && method_exists($gateway, 'get_allowed_cards')) {
+                $error = MPS_Card_Validator::brand_error($card_number, $gateway->get_allowed_cards());
+            }
+        }
+
         if (!$error) return;
 
         if (class_exists('\Automattic\WooCommerce\StoreApi\Exceptions\RouteException')) {

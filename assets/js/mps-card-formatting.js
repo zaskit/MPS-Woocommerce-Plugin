@@ -33,38 +33,12 @@
         });
     }
 
-    function isMastercard(digits){
-        if(digits.length<2) return null;
-        var two = parseInt(digits.substring(0,2),10);
-        if(two>=51 && two<=55) return true;
-        if(digits.length>=4){
-            var four = parseInt(digits.substring(0,4),10);
-            if(four>=2221 && four<=2720) return true;
-        }
-        return false;
-    }
-
-    function setupMastercardCheck(input){
-        if(input.getAttribute('data-mc-only') !== '1') return;
-
-        var notice = document.createElement('div');
-        notice.className = 'mps-mc-notice';
-        notice.textContent = 'Only Mastercard is accepted on this gateway. Please use a Mastercard.';
-        input.parentNode.appendChild(notice);
-
-        input.addEventListener('input',function(){
-            var digits = this.value.replace(/\D/g,'');
-            if(digits.length<2){ notice.style.display='none'; input.style.borderColor=''; return; }
-            var mc = isMastercard(digits);
-            if(mc===false){
-                notice.style.display='block';
-                input.style.borderColor='#b91c1c';
-            } else {
-                notice.style.display='none';
-                input.style.borderColor='';
-            }
-        });
-    }
+    /*
+     * isMastercard()/setupMastercardCheck() lived here until v2.5.9. A Mastercard-only gateway is
+     * just one shape of the portal's allowed_cards list, and the general check in setupBinBlock()
+     * covers it — in the same message line as the other card problems, instead of a second notice
+     * of its own saying nearly the same thing.
+     */
 
     // The charge acknowledgment is mandatory (client 2026-07-29). It renders ticked; if the customer
     // clears it we put it straight back and say why, rather than letting them reach the pay button
@@ -97,19 +71,11 @@
      */
     var MPS_CARD_MESSAGE = 'Please check the card number and enter it again.';
 
-    function mpsCardSchemeLengths(pan){
-        var p2 = parseInt(pan.slice(0,2), 10), p3 = parseInt(pan.slice(0,3), 10),
-            p4 = parseInt(pan.slice(0,4), 10), p6 = parseInt(pan.slice(0,6), 10);
-        if(pan.charAt(0) === '4') return [13,16,19];                                  // Visa
-        if((p2 >= 51 && p2 <= 55) || (p4 >= 2221 && p4 <= 2720)) return [16];         // Mastercard
-        if(p2 === 34 || p2 === 37) return [15];                                       // Amex
-        if(p4 === 6011 || p2 === 65 || (p3 >= 644 && p3 <= 649) ||
-           (p6 >= 622126 && p6 <= 622925)) return [16,19];                            // Discover
-        if((p3 >= 300 && p3 <= 305) || p2 === 36 || p2 === 38) return [14,16,19];      // Diners
-        if(p4 >= 3528 && p4 <= 3589) return [16,17,18,19];                             // JCB
-        if(p2 === 62) return [16,17,18,19];                                            // UnionPay
-        return null;  // unknown range: new BINs appear, so fall back to the generic check
-    }
+    // PAN lengths each scheme issues. Derived from mpsScheme() so the ranges live in ONE place.
+    var MPS_SCHEME_LENGTHS = {
+        visa:[13,16,19], mastercard:[16], amex:[15], discover:[16,19],
+        diners:[14,16,19], jcb:[16,17,18,19], unionpay:[16,17,18,19]
+    };
 
     function mpsLuhn(pan){
         var sum = 0, dbl = false, d;
@@ -122,23 +88,62 @@
         return sum % 10 === 0;
     }
 
+    var MPS_SCHEME_LABELS = {
+        visa:'Visa', mastercard:'Mastercard', amex:'American Express',
+        discover:'Discover', diners:'Diners Club', jcb:'JCB', unionpay:'UnionPay'
+    };
+
+    function mpsScheme(pan){
+        if(pan.length < 4) return null;
+        var p2 = parseInt(pan.slice(0,2), 10), p3 = parseInt(pan.slice(0,3), 10),
+            p4 = parseInt(pan.slice(0,4), 10), p6 = parseInt(pan.slice(0,6), 10);
+        if(pan.charAt(0) === '4') return 'visa';
+        if((p2 >= 51 && p2 <= 55) || (p4 >= 2221 && p4 <= 2720)) return 'mastercard';
+        if(p2 === 34 || p2 === 37) return 'amex';
+        if(p4 === 6011 || p2 === 65 || (p3 >= 644 && p3 <= 649) || (p6 >= 622126 && p6 <= 622925)) return 'discover';
+        if((p3 >= 300 && p3 <= 305) || p2 === 36 || p2 === 38) return 'diners';
+        if(p4 >= 3528 && p4 <= 3589) return 'jcb';
+        if(p2 === 62) return 'unionpay';
+        return null;
+    }
+
+    /**
+     * The scheme allow-list from the portal. Unlike validity, this is known from the first digits,
+     * so it fires as the number is typed. An unrecognised range is allowed through — see
+     * MPS_Card_Validator::brand_error().
+     */
+    function mpsBrandError(value, allowed){
+        if(!allowed || !allowed.length) return null;
+        var scheme = mpsScheme(String(value || '').replace(/\D/g,''));
+        if(!scheme || allowed.indexOf(scheme) !== -1) return null;
+
+        var names = allowed.map(function(a){ return MPS_SCHEME_LABELS[a] || a; });
+        var list = names.length > 1
+            ? names.slice(0, -1).join(', ') + ' and ' + names[names.length - 1]
+            : names[0];
+        return 'Only ' + list + ' are accepted here. Please use a different card.';
+    }
+
     function mpsCardNumberError(value){
         var pan = String(value || '').replace(/\D/g,'');
         if(!pan) return null;                                   // empty is "not filled in yet"
         if(pan.length < 12 || pan.length > 19) return MPS_CARD_MESSAGE;
         if(/^(\d)\1+$/.test(pan)) return MPS_CARD_MESSAGE;      // 0000... passes Luhn, is not a card
-        var lengths = mpsCardSchemeLengths(pan);
-        if(lengths && lengths.indexOf(pan.length) === -1) return MPS_CARD_MESSAGE;
+        var scheme = mpsScheme(pan);
+        if(scheme && MPS_SCHEME_LENGTHS[scheme].indexOf(pan.length) === -1) return MPS_CARD_MESSAGE;
         if(!mpsLuhn(pan)) return MPS_CARD_MESSAGE;
         return null;
     }
 
     /**
-     * The two checks that share the message line under the card field:
+     * The three checks that share the message line under the card field:
      *
      *   - blocked BIN: a real card the processor will never approve. Known from the first digits,
      *     so it fires as the number is typed, and the Place Order button is disabled — that state
      *     is terminal, no amount of re-typing this card will help.
+     *   - wrong brand: a scheme this merchant does not accept (portal allowed_cards). Also known
+     *     from the first digits, so it fires while typing — nobody should fill in expiry and CVV
+     *     for a card we were never going to take.
      *   - invalid number: fails scheme/length/Luhn. Only checked on BLUR, because every partial
      *     number fails Luhn and flagging a customer mid-type is wrong. The button is left alone;
      *     they may still be editing, and the server refuses it anyway.
@@ -150,10 +155,12 @@
         if(input.dataset.mpsBinBound) return;
         input.dataset.mpsBinBound = '1';
 
-        var rules;
+        var rules, allowed;
         try { rules = JSON.parse(input.getAttribute('data-blocked-bins') || '[]'); }
         catch(e){ rules = []; }
         if(!rules){ rules = []; }
+        try { allowed = JSON.parse(input.getAttribute('data-allowed-cards') || '[]'); }
+        catch(e){ allowed = []; }
 
         var notice = input.parentNode.querySelector('.mps-bin-blocked');
 
@@ -195,6 +202,15 @@
                 btn.classList.remove('mps-blocked-submit');
             }
 
+            // Brand is known from the first digits, so it is reported as they type — the customer
+            // should not fill in expiry and CVV for a card we were never going to take.
+            var wrongBrand = mpsBrandError(digits, allowed);
+            if(wrongBrand){
+                if(notice){ notice.textContent = wrongBrand; notice.style.display = ''; }
+                input.classList.add('mps-input-error');
+                return;
+            }
+
             var invalid = isFinal ? mpsCardNumberError(digits) : null;
             if(invalid){
                 if(notice){ notice.textContent = invalid; notice.style.display = ''; }
@@ -215,7 +231,6 @@
         // Card number fields
         document.querySelectorAll('.mps-card-form input[name$="_card_number"]').forEach(function(el){
             formatCardNumber(el);
-            setupMastercardCheck(el);
         });
 
         // Blocked BINs

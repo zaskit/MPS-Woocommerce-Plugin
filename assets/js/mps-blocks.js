@@ -81,17 +81,39 @@
      */
     var MPS_CARD_MESSAGE = 'Please check the card number and enter it again.';
 
-    function cardSchemeLengths(pan){
+    var SCHEME_LABELS = {
+        visa:'Visa', mastercard:'Mastercard', amex:'American Express',
+        discover:'Discover', diners:'Diners Club', jcb:'JCB', unionpay:'UnionPay'
+    };
+    var SCHEME_LENGTHS = {
+        visa:[13,16,19], mastercard:[16], amex:[15], discover:[16,19],
+        diners:[14,16,19], jcb:[16,17,18,19], unionpay:[16,17,18,19]
+    };
+
+    function cardScheme(pan){
+        if(pan.length < 4) return null;
         var p2 = parseInt(pan.slice(0,2), 10), p3 = parseInt(pan.slice(0,3), 10),
             p4 = parseInt(pan.slice(0,4), 10), p6 = parseInt(pan.slice(0,6), 10);
-        if(pan.charAt(0) === '4') return [13,16,19];
-        if((p2 >= 51 && p2 <= 55) || (p4 >= 2221 && p4 <= 2720)) return [16];
-        if(p2 === 34 || p2 === 37) return [15];
-        if(p4 === 6011 || p2 === 65 || (p3 >= 644 && p3 <= 649) || (p6 >= 622126 && p6 <= 622925)) return [16,19];
-        if((p3 >= 300 && p3 <= 305) || p2 === 36 || p2 === 38) return [14,16,19];
-        if(p4 >= 3528 && p4 <= 3589) return [16,17,18,19];
-        if(p2 === 62) return [16,17,18,19];
+        if(pan.charAt(0) === '4') return 'visa';
+        if((p2 >= 51 && p2 <= 55) || (p4 >= 2221 && p4 <= 2720)) return 'mastercard';
+        if(p2 === 34 || p2 === 37) return 'amex';
+        if(p4 === 6011 || p2 === 65 || (p3 >= 644 && p3 <= 649) || (p6 >= 622126 && p6 <= 622925)) return 'discover';
+        if((p3 >= 300 && p3 <= 305) || p2 === 36 || p2 === 38) return 'diners';
+        if(p4 >= 3528 && p4 <= 3589) return 'jcb';
+        if(p2 === 62) return 'unionpay';
         return null;
+    }
+
+    /** Scheme allow-list from the portal. Unknown ranges pass — see MPS_Card_Validator::brand_error(). */
+    function brandError(value, allowed){
+        if(!allowed || !allowed.length) return null;
+        var scheme = cardScheme(String(value || '').replace(/\D/g,''));
+        if(!scheme || allowed.indexOf(scheme) !== -1) return null;
+        var names = allowed.map(function(a){ return SCHEME_LABELS[a] || a; });
+        var list = names.length > 1
+            ? names.slice(0, -1).join(', ') + ' and ' + names[names.length - 1]
+            : names[0];
+        return 'Only ' + list + ' are accepted here. Please use a different card.';
     }
 
     function luhn(pan){
@@ -110,8 +132,8 @@
         if(!pan) return null;
         if(pan.length < 12 || pan.length > 19) return MPS_CARD_MESSAGE;
         if(/^(\d)\1+$/.test(pan)) return MPS_CARD_MESSAGE;
-        var lengths = cardSchemeLengths(pan);
-        if(lengths && lengths.indexOf(pan.length) === -1) return MPS_CARD_MESSAGE;
+        var scheme = cardScheme(pan);
+        if(scheme && SCHEME_LENGTHS[scheme].indexOf(pan.length) === -1) return MPS_CARD_MESSAGE;
         if(!luhn(pan)) return MPS_CARD_MESSAGE;
         return null;
     }
@@ -224,6 +246,12 @@
                         };
                     }
 
+                    var wrongBrand = brandError(s.card_number, dataVar.allowed_cards);
+                    if(wrongBrand){
+                        setBinBlocked(wrongBrand);
+                        return { type: emitResponse.responseTypes.ERROR, message: wrongBrand };
+                    }
+
                     // Scheme/length/Luhn. A number that fails these cannot be approved by anyone,
                     // and sending it costs a Format Error on the MID that reads as a decline.
                     var invalid = cardNumberError(s.card_number);
@@ -280,7 +308,10 @@
                     onFieldChange = function(e){
                         var v = e && e.target ? e.target.value : '';
                         var hit = matchBlockedBin(v);
-                        setBinBlocked(hit ? (hit.message || 'This card cannot be used on this store. Please try a different card.') : null);
+                        // Both of these are known from the first digits, so they show while typing.
+                        setBinBlocked(hit
+                            ? (hit.message || 'This card cannot be used on this store. Please try a different card.')
+                            : brandError(v, dataVar.allowed_cards));
                         return inner(e);
                     };
                 }
@@ -299,7 +330,7 @@
                     inputProps.onBlur = function(e){
                         var v = e && e.target ? e.target.value : '';
                         if(matchBlockedBin(v)) return;
-                        setBinBlocked(cardNumberError(v));
+                        setBinBlocked(brandError(v, dataVar.allowed_cards) || cardNumberError(v));
                     };
                 }
                 elements.push(

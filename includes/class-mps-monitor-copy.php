@@ -44,26 +44,28 @@ class MPS_Monitor_Copy {
 	 * reason  — one sentence, customer-facing, no jargon, no blame.
 	 * action  — the single most useful thing they can do next.
 	 * posture — one of the constants above.
-	 * alt     — push Zelle / ACH / crypto in the email?
+	 * alt     — is a non-card method worth offering for this decline? The email only shows the
+	 *           block when the STORE actually has one enabled — the copy never names a method, so
+	 *           nothing here can promise a payment option a merchant does not offer.
 	 */
 	private static function map(): array {
 		return array(
 			// ── The big one. 47% of all declines. Issuer blocking the cross-border/MCC combination.
 			'1556' => array(
 				'reason'  => 'Your bank blocked this specific purchase as a precaution. This is a restriction on the transaction, not a problem with your card — there is nothing wrong with the card itself.',
-				'action'  => 'Call the number on the back of your card, tell them you are authorizing a purchase from an international merchant, then use the link below to try again. This clears it in almost every case.',
+				'action'  => 'Call the number on the back of your card, tell them you are authorizing this purchase, then use the link below to try again. This clears it in almost every case.',
 				'posture' => self::RETRY_AFTER_BANK_CALL,
 				'alt'     => true,
 			),
 			'9011' => array(
-				'reason'  => 'Your bank declined the transaction without giving a specific reason. With cards this usually means their fraud screening flagged the purchase because it is processed overseas.',
+				'reason'  => 'Your bank declined the transaction without giving a specific reason. This usually means their fraud screening did not recognise the purchase.',
 				'action'  => 'A quick call to your card issuer to authorize the purchase will normally clear it. After that, use the link below to complete your order.',
 				'posture' => self::RETRY_AFTER_BANK_CALL,
 				'alt'     => true,
 			),
 			'1781' => array(
 				'reason'  => 'Your bank does not permit this type of transaction on your card.',
-				'action'  => 'Call your card issuer and ask them to allow international purchases, or use one of the alternative payment methods below.',
+				'action'  => 'Call your card issuer and ask them to allow this purchase, or pay with a different card.',
 				'posture' => self::RETRY_AFTER_BANK_CALL,
 				'alt'     => true,
 			),
@@ -83,13 +85,13 @@ class MPS_Monitor_Copy {
 			// ── Fraud blocks. Retrying these is what gets a merchant account flagged.
 			'9014' => array(
 				'reason'  => 'Your bank\'s fraud protection system blocked this transaction.',
-				'action'  => 'Please do not try this card again — repeated attempts can lock it. Speak to your bank first, or use one of the alternative payment methods below.',
+				'action'  => 'Please do not try this card again — repeated attempts can lock it. Speak to your bank first, or pay with a different card.',
 				'posture' => self::DO_NOT_RETRY,
 				'alt'     => true,
 			),
 			'9877' => array(
 				'reason'  => 'Your bank declined this transaction on suspicion of fraud.',
-				'action'  => 'Please do not try this card again. Contact your bank, or use one of the alternative payment methods below.',
+				'action'  => 'Please do not try this card again. Contact your bank, or pay with a different card.',
 				'posture' => self::DO_NOT_RETRY,
 				'alt'     => true,
 			),
@@ -97,7 +99,7 @@ class MPS_Monitor_Copy {
 			// ── Customer data errors. Cheap to fix, high recovery.
 			'1784' => array(
 				'reason'  => 'The security code (CVV) entered did not match the one your bank has on file.',
-				'action'  => 'Use the link below and re-enter the 3-digit code from the back of your card (4 digits on the front for American Express).',
+				'action'  => 'Use the link below and re-enter the 3-digit security code from the back of your card.',
 				'posture' => self::RETRY_FIX_DETAILS,
 				'alt'     => false,
 			),
@@ -141,19 +143,19 @@ class MPS_Monitor_Copy {
 			// ── Limits and balance.
 			'1502' => array(
 				'reason'  => 'There were not enough available funds on the card to complete the purchase.',
-				'action'  => 'You can complete the order with a different card, or use one of the alternative payment methods below.',
+				'action'  => 'You can complete the order with a different card.',
 				'posture' => self::RETRY_OTHER_CARD,
 				'alt'     => true,
 			),
 			'9845' => array(
 				'reason'  => 'The card has reached its daily transaction limit.',
-				'action'  => 'You can try again tomorrow, use a different card, or use one of the alternative payment methods below.',
+				'action'  => 'You can try again tomorrow, or complete the order now with a different card.',
 				'posture' => self::RETRY_OTHER_CARD,
 				'alt'     => true,
 			),
 			'9043' => array(
 				'reason'  => 'The amount is above the per-transaction limit your bank allows on this card.',
-				'action'  => 'Your bank may be able to lift the limit if you call them. Otherwise a different card or one of the alternative payment methods below will work.',
+				'action'  => 'Your bank may be able to lift the limit if you call them. Otherwise a different card will work.',
 				'posture' => self::RETRY_AFTER_BANK_CALL,
 				'alt'     => true,
 			),
@@ -161,19 +163,19 @@ class MPS_Monitor_Copy {
 			// ── Card / merchant restrictions.
 			'9524' => array(
 				'reason'  => 'Your bank does not allow this card to be used with this type of merchant.',
-				'action'  => 'Please use a different card, or one of the alternative payment methods below.',
+				'action'  => 'Please use a different card to complete the order.',
 				'posture' => self::RETRY_OTHER_CARD,
 				'alt'     => true,
 			),
 			'9006' => array(
 				'reason'  => 'The card is reported as inactive or closed.',
-				'action'  => 'Please use a different card, or one of the alternative payment methods below.',
+				'action'  => 'Please use a different card to complete the order.',
 				'posture' => self::RETRY_OTHER_CARD,
 				'alt'     => true,
 			),
 			'1782' => array(
 				'reason'  => 'Your bank could not authorize the transaction on this card.',
-				'action'  => 'Please try a different card, or use one of the alternative payment methods below.',
+				'action'  => 'Please try a different card to complete the order.',
 				'posture' => self::RETRY_OTHER_CARD,
 				'alt'     => true,
 			),
@@ -181,7 +183,7 @@ class MPS_Monitor_Copy {
 			// ── Processor-side error, not the customer's fault.
 			'9860' => array(
 				'reason'  => 'A temporary error occurred while the payment was being processed. This is on the payment network\'s side, not with your card.',
-				'action'  => 'Please use the link below to try again. If it happens a second time, one of the alternative payment methods below will go through.',
+				'action'  => 'Please use the link below to try again. If it happens a second time, a different card will usually go through.',
 				'posture' => self::RETRY_FIX_DETAILS,
 				'alt'     => true,
 			),
@@ -210,13 +212,13 @@ class MPS_Monitor_Copy {
 	private static function generic_action( string $posture ): string {
 		switch ( $posture ) {
 			case MPS_Decline_Codes::DO_NOT_RETRY:
-				return 'Please do not try this card again — repeated attempts can lock it. Contact your bank, or use one of the alternative payment methods below.';
+				return 'Please do not try this card again — repeated attempts can lock it. Contact your bank, or pay with a different card.';
 			case MPS_Decline_Codes::CONTACT_ISSUER:
 				return 'Call the number on the back of your card and authorize the purchase, then use the link below to try again.';
 			case MPS_Decline_Codes::VERIFY_CARD:
 				return 'Use the link below and check the card number, expiry date and security code before trying again.';
 		}
-		return 'You can complete the order with a different card, or use one of the alternative payment methods below.';
+		return 'You can complete the order with a different card.';
 	}
 
 	/**

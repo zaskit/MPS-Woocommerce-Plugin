@@ -339,11 +339,21 @@ class MPS_Monitor_Ledger {
 			$params[] = gmdate( 'Y-m-d H:i:s', strtotime( '-' . (int) $args['days'] . ' days', (int) current_time( 'timestamp' ) ) );
 		}
 		if ( '' !== $args['search'] ) {
-			$where[]  = '(billing_email LIKE %s OR billing_name LIKE %s OR order_id = %d)';
-			$like     = '%' . $wpdb->esc_like( $args['search'] ) . '%';
-			$params[] = $like;
-			$params[] = $like;
-			$params[] = (int) $args['search'];
+			$like = '%' . $wpdb->esc_like( $args['search'] ) . '%';
+			// 🛑 The order-id clause only applies to a NUMERIC search. It used to cast whatever was
+			// typed, so searching an email address gave order_id = 0 — which every blocked attempt
+			// carries (they are refused before an order exists), so a name search returned the whole
+			// blocked list as if it matched.
+			if ( ctype_digit( (string) $args['search'] ) ) {
+				$where[]  = '(billing_email LIKE %s OR billing_name LIKE %s OR order_id = %d)';
+				$params[] = $like;
+				$params[] = $like;
+				$params[] = (int) $args['search'];
+			} else {
+				$where[]  = '(billing_email LIKE %s OR billing_name LIKE %s)';
+				$params[] = $like;
+				$params[] = $like;
+			}
 		}
 		if ( '' !== $args['notify_state'] ) {
 			$where[]  = 'notify_state = %s';

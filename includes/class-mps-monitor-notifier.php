@@ -41,21 +41,46 @@ class MPS_Monitor_Notifier {
 	 *
 	 * This plugin ships to every merchant on the portal. A default address baked into the code, or
 	 * one saved into an option on one store and carried into a zip, would email another merchant's
-	 * customers a support address that is not theirs. So the contact address is READ FROM THE SITE
-	 * on every send: WooCommerce's own "from" address, falling back to the WordPress admin email.
-	 * Whatever the merchant already uses for their WooCommerce mail is what customers are told.
+	 * customers a support address that is not theirs. So the contact details are READ FROM THE SITE
+	 * on every send, through MPS_Merchant_Contact: what the merchant typed on the MPS settings page,
+	 * else WooCommerce's own "from" address, else the WordPress admin email — and never a
+	 * placeholder address.
 	 */
 	public static function contact_email(): string {
-		$candidates = array(
-			(string) get_option( 'woocommerce_email_from_address', '' ),
-			(string) get_option( 'admin_email', '' ),
-		);
-		foreach ( $candidates as $email ) {
-			if ( is_email( $email ) ) {
-				return $email;
+		// Delegates to MPS_Merchant_Contact, which applies the same resolution AND rejects the
+		// placeholder addresses a default install ships with (dev-email@wpengine.local and friends).
+		// This used to accept anything is_email() liked, so a store that had never set a real
+		// address told declined customers to write to a black hole — the surest way to lose an
+		// order we were trying to recover.
+		return class_exists( 'MPS_Merchant_Contact' ) ? MPS_Merchant_Contact::email() : '';
+	}
+
+	/**
+	 * Payment methods this store ACTUALLY offers besides the card gateways, as [label, ...].
+	 *
+	 * 🛑 The email used to name Zelle, ACH and cryptocurrency outright. Those are one merchant's
+	 * methods, hardcoded into a plugin that ships to every merchant on the portal — so a store
+	 * offering none of them promised a declined customer three ways to pay that do not exist. What
+	 * is offered is read from WooCommerce at send time instead, and the block is omitted when the
+	 * store has nothing else enabled.
+	 */
+	public static function alternative_methods(): array {
+		if ( ! function_exists( 'WC' ) || ! WC()->payment_gateways() ) {
+			return array();
+		}
+
+		$labels = array();
+		foreach ( WC()->payment_gateways()->get_available_payment_gateways() as $gateway ) {
+			if ( 0 === strpos( $gateway->id, 'mps_' ) ) {
+				continue;   // another card attempt is not an alternative to a card decline
+			}
+			$title = wp_strip_all_tags( $gateway->get_title() );
+			if ( '' !== $title ) {
+				$labels[] = $title;
 			}
 		}
-		return '';
+
+		return array_slice( array_unique( $labels ), 0, 4 );
 	}
 
 	/**
@@ -249,6 +274,11 @@ class MPS_Monitor_Notifier {
 	 */
 	public static function render( object $row, WC_Order $order, array $copy ): string {
 		$store      = get_bloginfo( 'name' );
+		// The merchant as the customer knows them, plus a support address we are willing to print.
+		// Both come from MPS_Merchant_Contact so this email says exactly what the thank-you page and
+		// the billing notice say, and never prints a placeholder address (2026-08-20).
+		$merchant   = class_exists( 'MPS_Merchant_Contact' ) ? ( MPS_Merchant_Contact::name() ?: $store ) : $store;
+		$phone      = class_exists( 'MPS_Merchant_Contact' ) ? MPS_Merchant_Contact::phone() : '';
 		$contact    = self::contact_email();
 		$descriptor = self::descriptor( $order );
 		$pay_url    = $order->get_checkout_payment_url();
@@ -282,7 +312,7 @@ class MPS_Monitor_Notifier {
 		<?php if ( '' !== $descriptor ) : ?>
 		<p style="margin:0 0 20px;padding:14px 16px;background:#fffbeb;border:1px solid #fcd34d;border-left:5px solid #f59e0b;border-radius:8px;font-size:15px;line-height:1.6;color:#451a03;">
 			<strong>Please note:</strong> the charge appears on your statement as
-			<strong style="letter-spacing:.04em;"><?php echo esc_html( $descriptor ); ?></strong>, not <?php echo esc_html( $store ); ?>.
+			<strong style="letter-spacing:.04em;"><?php echo esc_html( $descriptor ); ?></strong>, not <?php echo esc_html( $merchant ); ?>.
 		</p>
 		<?php endif; ?>
 	</div>
@@ -301,28 +331,40 @@ class MPS_Monitor_Notifier {
 	</div>
 	<?php endif; ?>
 
+	<?php /* Why the bank may have refused, without describing our processing arrangements. The
+	         paragraph that used to sit here explained that payments "are handled through an overseas
+	         banking partner" — one merchant's wording, sent to every merchant's customers, and it
+	         invited the customer to go looking into who really takes the money. That is exactly how
+	         a customer ended up phoning the descriptor holder (2026-08-20). */ ?>
 	<div style="margin:0 32px 24px;padding:18px 20px;background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;">
-		<p style="margin:0 0 10px;font-size:14px;line-height:1.6;color:#374151;">
-			<strong>A note on how our card payments are processed.</strong>
-			Our payment processing system has recently changed. Because payments are handled through an
-			overseas banking partner, some banks and card issuers decline the first attempt as a fraud
-			prevention measure. A quick call to your bank to authorize the purchase will normally allow
-			it to go through.
+		<p style="margin:0<?php echo '' !== $descriptor ? ' 0 12px' : ''; ?>;font-size:14px;line-height:1.6;color:#374151;">
+			<strong>Why this can happen.</strong>
+			Card issuers sometimes refuse a first attempt as a routine fraud check, especially on a
+			purchase they have not seen before. A quick call to your bank to approve the purchase
+			normally clears it, and a different card usually works too.
 		</p>
 		<?php if ( '' !== $descriptor ) : ?>
-		<p style="margin:0;padding:12px 14px;background:#fffbeb;border:1px solid #fcd34d;border-radius:6px;font-size:14px;line-height:1.6;color:#451a03;font-weight:600;">
-			Please also note that the charge appears on your statement as
-			<strong style="letter-spacing:.04em;"><?php echo esc_html( $descriptor ); ?></strong>, not <?php echo esc_html( $store ); ?>.
+		<p style="margin:0;padding:12px 14px;background:#fffbeb;border:1px solid #fcd34d;border-radius:6px;font-size:14px;line-height:1.6;color:#451a03;">
+			<strong>On your statement</strong> this purchase appears as
+			<strong style="letter-spacing:.04em;"><?php echo esc_html( $descriptor ); ?></strong>, not <?php echo esc_html( $merchant ); ?>.
+			<?php echo esc_html( $descriptor ); ?> is a billing descriptor only — please do not contact it.
+			For anything to do with this order, contact <?php echo esc_html( $merchant ); ?><?php echo $contact ? ' at ' . esc_html( $contact ) : ''; ?>.
 		</p>
 		<?php endif; ?>
 	</div>
 
-	<?php if ( ! empty( $copy['alt'] ) ) : ?>
+	<?php
+	/* Only offered when the STORE actually has another method enabled — read from WooCommerce at
+	   send time. @see alternative_methods() */
+	$alts = ! empty( $copy['alt'] ) ? self::alternative_methods() : array();
+	?>
+	<?php if ( $alts ) : ?>
 	<div style="padding:0 32px 24px;">
 		<div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#6b7280;margin-bottom:10px;">Prefer not to use a card?</div>
 		<p style="margin:0 0 12px;font-size:15px;line-height:1.6;color:#374151;">
-			We also accept <strong>Zelle</strong>, <strong>ACH bank transfer</strong> and <strong>cryptocurrency</strong>.
-			These go through first time and are not subject to card-issuer declines.
+			This order can also be paid by
+			<strong><?php echo implode( '</strong>, <strong>', array_map( 'esc_html', $alts ) ); ?></strong>,
+			which is not subject to card-issuer declines.
 		</p>
 		<a href="<?php echo esc_url( $pay_url ); ?>" style="font-size:15px;color:#111827;font-weight:600;">Choose a different payment method &rarr;</a>
 	</div>
@@ -334,9 +376,10 @@ class MPS_Monitor_Notifier {
 		         The middle clause only appears when that block was actually shown, so "one of the
 		         methods above" always has something to refer to. */ ?>
 		<p style="margin:0 0 6px;font-size:14px;line-height:1.6;color:#374151;">
-			If you have any trouble at all<?php echo empty( $copy['alt'] ) ? '' : ', or would like help switching to one of the payment methods above'; ?>,
-			email us at
-			<a href="mailto:<?php echo esc_attr( $contact ); ?>" style="color:#111827;font-weight:600;"><?php echo esc_html( $contact ); ?></a>
+			If you have any trouble at all<?php echo $alts ? ', or would like help switching to one of the payment methods above' : ''; ?>,
+			contact <?php echo esc_html( $merchant ); ?><?php if ( '' !== $contact ) : ?>
+			at <a href="mailto:<?php echo esc_attr( $contact ); ?>" style="color:#111827;font-weight:600;"><?php echo esc_html( $contact ); ?></a><?php endif; ?><?php if ( '' !== $phone ) : ?>
+			or <a href="tel:<?php echo esc_attr( preg_replace( '/[^\d+]/', '', $phone ) ); ?>" style="color:#111827;font-weight:600;text-decoration:none;"><?php echo esc_html( $phone ); ?></a><?php endif; ?>
 			and our team will help you finish your order.
 		</p>
 		<?php /* The "You can also reach us on <phone>, Monday to Friday, 9am-5pm CST" line was
@@ -345,8 +388,8 @@ class MPS_Monitor_Notifier {
 		         support_phone setting and its admin field were removed with it so the value
 		         cannot quietly reappear. */ ?>
 		<p style="margin:0 0 14px;font-size:14px;line-height:1.6;color:#6b7280;">
-			Thank you for choosing <?php echo esc_html( $store ); ?>.<br>
-			<span style="color:#9ca3af;">The <?php echo esc_html( $store ); ?> Team</span>
+			Thank you for choosing <?php echo esc_html( $merchant ); ?>.<br>
+			<span style="color:#9ca3af;">The <?php echo esc_html( $merchant ); ?> Team</span>
 		</p>
 		<?php /* No "unmonitored address / do not reply" line any more: Reply-To is now the store's
 		         own WooCommerce address, so a reply reaches the merchant. Telling a customer not to

@@ -62,6 +62,7 @@ add_action('plugins_loaded', function() {
     require_once MPS_PLUGIN_DIR . 'includes/class-mps-portal-client.php';
     require_once MPS_PLUGIN_DIR . 'includes/class-mps-transaction-reporter.php';
     require_once MPS_PLUGIN_DIR . 'includes/class-mps-card-validator.php';
+    require_once MPS_PLUGIN_DIR . 'includes/class-mps-merchant-contact.php';
     require_once MPS_PLUGIN_DIR . 'includes/class-mps-base-gateway.php';
     require_once MPS_PLUGIN_DIR . 'includes/class-mps-vprocessor-api.php';
     require_once MPS_PLUGIN_DIR . 'includes/class-mps-vprocessor-2d.php';
@@ -199,6 +200,43 @@ add_action('plugins_loaded', function() {
                     'label' => 'Enable debug logging',
                     'default' => 'no',
                     'description' => 'Logs to WooCommerce > Status > Logs (mps-*). Sensitive data is automatically redacted.',
+                ],
+                // Printed on the thank-you page and in every post-purchase email, directly under
+                // "contact us". A customer who cannot find these goes looking for the descriptor
+                // instead and ends up phoning the MID holder — which is what happened on
+                // 2026-08-20 and why these fields exist.
+                'support_heading' => [
+                    'title' => 'Customer Support Contact',
+                    'type'  => 'title',
+                    'description' => 'Shown to your customers after they pay, so they contact YOU about their order rather than searching for the name on their bank statement. Left blank, each line falls back to your WordPress/WooCommerce values — except the phone number, which has no other source and is simply left out.',
+                ],
+                'support_name' => [
+                    'title' => 'Business Name',
+                    'type'  => 'text',
+                    'placeholder' => get_bloginfo('name'),
+                    'description' => 'The name your customers know you by. Defaults to your store name.',
+                    'desc_tip' => true,
+                ],
+                'support_email' => [
+                    'title' => 'Support Email',
+                    'type'  => 'email',
+                    'placeholder' => 'support@yourstore.com',
+                    'description' => 'Where customers should email about orders, refunds and returns. Defaults to your WooCommerce sender address — but a placeholder address (anything ending .local, .test or example.com) is never shown to a customer.',
+                    'desc_tip' => true,
+                ],
+                'support_phone' => [
+                    'title' => 'Support Phone',
+                    'type'  => 'text',
+                    'placeholder' => '555-555-5555',
+                    'description' => 'Your customer support number. There is no other source for this, so if it is blank the phone line is left out of the notices entirely.',
+                    'desc_tip' => true,
+                ],
+                'support_url' => [
+                    'title' => 'Support Website',
+                    'type'  => 'text',
+                    'placeholder' => home_url(),
+                    'description' => 'Where customers can reach you online. Defaults to this site.',
+                    'desc_tip' => true,
                 ],
             ];
 
@@ -685,13 +723,75 @@ add_action('plugins_loaded', function() {
         }
     }
 
+    /**
+     * ─── Billing descriptor notice email ───
+     *
+     * Registered as a real WooCommerce email so the merchant sees it in WooCommerce → Settings →
+     * Emails alongside the others, with the store's own branding, and can edit the subject or turn
+     * it off. @see MPS_Billing_Notice_Email
+     */
+    add_filter('woocommerce_email_classes', function($emails) {
+        require_once MPS_PLUGIN_DIR . 'includes/class-mps-billing-notice-email.php';
+        if (class_exists('MPS_Billing_Notice_Email')) {
+            $emails['MPS_Billing_Notice_Email'] = new MPS_Billing_Notice_Email();
+        }
+        return $emails;
+    });
+
+    /**
+     * Sent the moment the payment succeeds (Salman, 2026-08-20: "lets send immediately, two emails
+     * are fine"), so the customer has the descriptor in writing before the charge can surprise them
+     * on a statement.
+     *
+     * Three entry points because processors finish in different ways: 2D returns approved inline,
+     * 3D and hosted come back through a redirect or webhook that flips the status later. All three
+     * land on the same guarded trigger, which is idempotent via order meta.
+     */
+    function mps_send_billing_notice($order_id) {
+        if (!$order_id || !function_exists('WC')) return;
+
+        $order = wc_get_order($order_id);
+        if (!$order || strpos($order->get_payment_method(), 'mps_') !== 0) return;
+
+        $mailer = WC()->mailer();
+        $emails = $mailer ? $mailer->get_emails() : [];
+        if (!empty($emails['MPS_Billing_Notice_Email'])) {
+            $emails['MPS_Billing_Notice_Email']->trigger($order_id, $order);
+        }
+    }
+    add_action('woocommerce_payment_complete', 'mps_send_billing_notice', 20);
+    add_action('woocommerce_order_status_processing', 'mps_send_billing_notice', 20);
+    add_action('woocommerce_order_status_completed', 'mps_send_billing_notice', 20);
+
+    /**
+     * Tell the merchant when the notices cannot name them properly.
+     *
+     * The whole point of this work is sending the customer to the merchant instead of the
+     * descriptor holder, which fails silently if the store never filled in its support details —
+     * and a placeholder address like dev-email@wpengine.local counts as not filled in.
+     */
+    add_action('admin_notices', function() {
+        if (!current_user_can('manage_woocommerce') || !class_exists('MPS_Merchant_Contact')) return;
+
+        $screen = function_exists('get_current_screen') ? get_current_screen() : null;
+        if ($screen && !in_array($screen->id, ['dashboard', 'woocommerce_page_wc-settings', 'plugins'], true)) return;
+
+        $missing = MPS_Merchant_Contact::missing();
+        if (!$missing) return;
+
+        $url = admin_url('admin.php?page=wc-settings&tab=checkout&section=mps_settings');
+        echo '<div class="notice notice-warning"><p><strong>MPS Gateway:</strong> your customers are told to contact you about their order, but this store has no ' .
+            esc_html(implode(', ', $missing)) . ' set. ' .
+            '<a href="' . esc_url($url) . '">Add your support contact details</a> so the post-purchase notices can point them to you.</p></div>';
+    });
+
     // ─── Descriptor Display (Thank-you page + Customer emails) ───
-    // Thank-you page: very top (before everything) and after order details
+    // 🛑 ONCE each, not twice. Until 2026-08-20 this printed at the top of the thank-you page AND
+    // again after the order details, and twice more in every customer email. The notice is now much
+    // louder, and a customer who reads the same warning four times across two emails stops reading
+    // it. The full treatment lives in the dedicated billing-notice email; these are the reminders.
     add_action('woocommerce_before_thankyou', 'mps_show_descriptor_thankyou', 10);
-    add_action('woocommerce_thankyou', 'mps_show_descriptor_thankyou', 5);
-    // Customer emails: show before and after order table (twice)
     add_action('woocommerce_email_before_order_table', 'mps_show_descriptor_email', 10, 4);
-    add_action('woocommerce_email_after_order_table', 'mps_show_descriptor_email', 10, 4);
 
     function mps_show_descriptor_thankyou($order_id) {
         $order = wc_get_order($order_id);
@@ -703,11 +803,37 @@ add_action('plugins_loaded', function() {
         $descriptor = $order->get_meta('_mps_descriptor');
         if (empty($descriptor)) return;
 
-        echo '<div class="mps-descriptor-message" style="background:#ecfdf5;border:1px solid #6ee7b7;border-left:6px solid #059669;padding:26px 28px;margin:0 0 32px;border-radius:10px;line-height:1.6;color:#064e3b;text-align:center;">';
-        echo '<div style="font-size:14px;font-weight:600;text-transform:uppercase;letter-spacing:1px;color:#059669;margin-bottom:8px;">This charge will appear on your statement as</div>';
-        echo '<div style="font-size:34px;font-weight:800;color:#047857;margin-bottom:14px;letter-spacing:0.3px;line-height:1.2;">' . esc_html($descriptor) . '</div>';
-        echo '<p style="margin:0 0 6px;font-size:15px;color:#065f46;">Your payment has been processed securely. Please look for the name above on your bank/card statement.</p>';
-        echo '<p style="margin:0;font-size:13px;color:#059669;">Questions about this transaction? Contact our support team before initiating any chargeback.</p>';
+        $contact = MPS_Merchant_Contact::all();
+
+        // Two blocks, in this order on purpose: who they bought from (with how to reach them) comes
+        // FIRST, so the support route is the thing they read before the unfamiliar name; the
+        // statement notice follows and points straight back to it.
+        echo '<div class="mps-post-purchase" style="margin:0 0 32px;">';
+
+        echo '<div class="mps-merchant-card" style="background:#ecfdf5;border:1px solid #6ee7b7;border-left:6px solid #059669;padding:26px 28px;border-radius:10px 10px 0 0;text-align:center;color:#064e3b;line-height:1.6;">';
+        echo '<div style="font-size:13px;font-weight:700;text-transform:uppercase;letter-spacing:1.2px;color:#059669;margin-bottom:8px;">Thank you for your purchase from</div>';
+        if ($contact['name']) {
+            echo '<div style="font-size:30px;font-weight:800;color:#047857;line-height:1.2;margin-bottom:10px;">' . esc_html($contact['name']) . '</div>';
+        }
+        $lines = [];
+        if ($contact['email']) {
+            $lines[] = '<a href="mailto:' . esc_attr($contact['email']) . '" style="color:#047857;text-decoration:underline;">' . esc_html($contact['email']) . '</a>';
+        }
+        if ($contact['phone']) {
+            $lines[] = '<a href="tel:' . esc_attr(preg_replace('/[^\d+]/', '', $contact['phone'])) . '" style="color:#047857;text-decoration:none;">' . esc_html($contact['phone']) . '</a>';
+        }
+        if ($lines) {
+            echo '<div style="font-size:16px;font-weight:600;">' . implode(' <span style="color:#6ee7b7;">|</span> ', $lines) . '</div>';
+        }
+        echo '</div>';
+
+        echo '<div class="mps-statement-notice" style="background:#fffbeb;border:1px solid #fcd34d;border-left:6px solid #d97706;border-top:0;padding:22px 28px;border-radius:0 0 10px 10px;color:#78350f;line-height:1.65;">';
+        echo '<p style="margin:0 0 10px;font-size:15px;"><strong style="text-transform:uppercase;letter-spacing:0.5px;">Bank statement notice:</strong> Your statement will display <strong style="font-size:19px;letter-spacing:0.3px;">' . esc_html($descriptor) . '</strong>.</p>';
+        echo '<p style="margin:0 0 10px;font-size:15px;font-weight:700;">' . esc_html($descriptor) . ' is a statement descriptor only — DO NOT CONTACT ' . esc_html($descriptor) . '.</p>';
+        echo '<p style="margin:0;font-size:15px;">For refunds, returns, cancellations, order questions, or payment support, contact ' .
+            ($contact['name'] ? '<strong>' . esc_html($contact['name']) . '</strong>' : 'us') . ' only.</p>';
+        echo '</div>';
+
         echo '</div>';
     }
 
@@ -718,15 +844,34 @@ add_action('plugins_loaded', function() {
         $descriptor = $order->get_meta('_mps_descriptor');
         if (empty($descriptor)) return;
 
+        $contact = MPS_Merchant_Contact::all();
+        $who = $contact['name'] ?: __('us', 'mps-gateway');
+
+        // The COMPACT version. The full "do not contact the descriptor" treatment is the dedicated
+        // billing-notice email — see MPS_Billing_Notice_Email. This is the reminder that rides along
+        // with the normal order mail, so it says the same thing in three lines.
         if ($plain_text) {
             echo "\n" . strtoupper($descriptor) . "\n";
-            echo "Your payment has been processed securely. The charge will appear on your bank/card statement under the name shown above.\n";
-            echo "If you have any questions regarding this transaction, please contact our support team. Please do not initiate chargebacks.\n\n";
+            echo sprintf("Your bank statement will show %s. That is a statement descriptor only — please do not contact it.\n", $descriptor);
+            echo sprintf("For refunds, returns, cancellations or any question about this order, contact %s", $who);
+            if ($contact['email']) { echo sprintf(" at %s", $contact['email']); }
+            if ($contact['phone']) { echo sprintf(" or %s", $contact['phone']); }
+            echo ".\n\n";
         } else {
-            echo '<div style="background:#f0f7ff;border:1px solid #c7d2fe;border-left:5px solid #6366f1;padding:20px 24px;margin:16px 0;border-radius:6px;font-size:15px;line-height:1.7;color:#1d2327;">';
-            echo '<div style="font-size:20px;font-weight:700;color:#4338ca;margin-bottom:10px;letter-spacing:0.3px;">' . esc_html($descriptor) . '</div>';
-            echo '<p style="margin:0 0 8px;font-size:15px;">Your payment has been processed securely. The charge will appear on your bank/card statement under the name shown above.</p>';
-            echo '<p style="margin:0;font-size:14px;color:#6b7280;">If you have any questions regarding this transaction, please contact our support team. Please do not initiate chargebacks.</p>';
+            echo '<div style="background:#fffbeb;border:1px solid #fcd34d;border-left:5px solid #d97706;padding:20px 24px;margin:16px 0;border-radius:6px;font-size:15px;line-height:1.7;color:#78350f;">';
+            echo '<p style="margin:0 0 8px;font-size:15px;">Your bank statement will show <strong style="font-size:19px;letter-spacing:0.3px;">' . esc_html($descriptor) . '</strong> — a statement descriptor only. <strong>Please do not contact ' . esc_html($descriptor) . '.</strong></p>';
+            echo '<p style="margin:0;font-size:15px;">For refunds, returns, cancellations or any question about this order, contact <strong>' . esc_html($who) . '</strong>';
+            $reach = [];
+            if ($contact['email']) {
+                $reach[] = '<a href="mailto:' . esc_attr($contact['email']) . '" style="color:#92400e;">' . esc_html($contact['email']) . '</a>';
+            }
+            if ($contact['phone']) {
+                $reach[] = esc_html($contact['phone']);
+            }
+            if ($reach) {
+                echo ' &mdash; ' . implode(' &middot; ', $reach);
+            }
+            echo '.</p>';
             echo '</div>';
         }
     }

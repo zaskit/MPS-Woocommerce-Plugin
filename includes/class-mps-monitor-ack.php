@@ -55,18 +55,31 @@ class MPS_Monitor_Ack {
 			$descriptor = trim( (string) $gateway->portal_descriptor );
 		}
 
+		/*
+		 * 🛑 The first line used to read "Your payment is processed through an overseas banking
+		 * partner." Two problems: it describes our processing arrangements to the customer at the
+		 * moment they are most likely to go looking (2026-08-20 — an Nxtstate customer googled the
+		 * descriptor and phoned the MID holder), and it is not even true on every processor — the
+		 * A-Processor stack settles to the merchant's own domestic Authorize.Net. The disclosure
+		 * keeps its dispute-defence job: warn about a first-attempt decline, and name the descriptor.
+		 */
 		$items = array(
-			'Your payment is processed through an <strong>overseas banking partner</strong>.',
 			'Some banks may <strong>decline the first attempt</strong> as a fraud protection measure. If that happens, a quick call to your bank to authorize the purchase will normally allow it to go through.',
 		);
 
 		// Only claim a descriptor we actually have — an empty "appears as" line invites the
 		// chargeback the sentence exists to prevent.
 		if ( '' !== $descriptor ) {
+			$merchant = class_exists( 'MPS_Merchant_Contact' )
+				? ( MPS_Merchant_Contact::name() ?: get_bloginfo( 'name' ) )
+				: get_bloginfo( 'name' );
+
 			$items[] = sprintf(
-				'The charge will appear on your statement as <strong>%s</strong>, not %s.',
+				'The charge will appear on your statement as <strong>%s</strong>, not %s. %s is a billing descriptor only — for anything to do with your order, contact %s.',
 				esc_html( $descriptor ),
-				esc_html( get_bloginfo( 'name' ) )
+				esc_html( $merchant ),
+				esc_html( $descriptor ),
+				esc_html( $merchant )
 			);
 		}
 

@@ -260,7 +260,7 @@ class MPS_Monitor_Copy {
 
 		if ( ! $copy ) {
 			return array(
-				'reason'  => 'Your bank declined the transaction. They have not told us the specific reason, which most often means their fraud screening flagged the purchase because it is processed through an overseas banking partner.',
+				'reason'  => 'Your bank declined the transaction and did not tell us the specific reason. This most often means their fraud screening did not recognise the purchase.',
 				'action'  => self::generic_action( $posture ),
 				'posture' => $posture,
 				'alt'     => true,

@@ -72,6 +72,50 @@
         return val.replace(/\D/g,'').substring(0, max);
     }
 
+    /**
+     * Card number sanity: scheme, length, Luhn. Mirrors MPS_Card_Validator in PHP and the copy in
+     * mps-card-formatting.js — change one, change all three. Returns a message or null.
+     *
+     * Block checkout never calls validate_fields(), so on a Blocks store this and the Store API
+     * guard are the whole of the card validation.
+     */
+    var MPS_CARD_MESSAGE = 'Please check the card number and enter it again.';
+
+    function cardSchemeLengths(pan){
+        var p2 = parseInt(pan.slice(0,2), 10), p3 = parseInt(pan.slice(0,3), 10),
+            p4 = parseInt(pan.slice(0,4), 10), p6 = parseInt(pan.slice(0,6), 10);
+        if(pan.charAt(0) === '4') return [13,16,19];
+        if((p2 >= 51 && p2 <= 55) || (p4 >= 2221 && p4 <= 2720)) return [16];
+        if(p2 === 34 || p2 === 37) return [15];
+        if(p4 === 6011 || p2 === 65 || (p3 >= 644 && p3 <= 649) || (p6 >= 622126 && p6 <= 622925)) return [16,19];
+        if((p3 >= 300 && p3 <= 305) || p2 === 36 || p2 === 38) return [14,16,19];
+        if(p4 >= 3528 && p4 <= 3589) return [16,17,18,19];
+        if(p2 === 62) return [16,17,18,19];
+        return null;
+    }
+
+    function luhn(pan){
+        var sum = 0, dbl = false, d;
+        for(var i = pan.length - 1; i >= 0; i--){
+            d = parseInt(pan.charAt(i), 10);
+            if(dbl){ d *= 2; if(d > 9){ d -= 9; } }
+            sum += d;
+            dbl = !dbl;
+        }
+        return sum % 10 === 0;
+    }
+
+    function cardNumberError(value){
+        var pan = String(value || '').replace(/\D/g,'');
+        if(!pan) return null;
+        if(pan.length < 12 || pan.length > 19) return MPS_CARD_MESSAGE;
+        if(/^(\d)\1+$/.test(pan)) return MPS_CARD_MESSAGE;
+        var lengths = cardSchemeLengths(pan);
+        if(lengths && lengths.indexOf(pan.length) === -1) return MPS_CARD_MESSAGE;
+        if(!luhn(pan)) return MPS_CARD_MESSAGE;
+        return null;
+    }
+
     function registerGateway(varName){
         var dataVar = window[varName];
         if(!dataVar || !dataVar.id) return;
@@ -180,6 +224,14 @@
                         };
                     }
 
+                    // Scheme/length/Luhn. A number that fails these cannot be approved by anyone,
+                    // and sending it costs a Format Error on the MID that reads as a decline.
+                    var invalid = cardNumberError(s.card_number);
+                    if(invalid){
+                        setBinBlocked(invalid);
+                        return { type: emitResponse.responseTypes.ERROR, message: invalid };
+                    }
+
                     return {
                         type: emitResponse.responseTypes.SUCCESS,
                         meta: { paymentMethodData: paymentData }
@@ -232,17 +284,28 @@
                         return inner(e);
                     };
                 }
+                var inputProps = {
+                    type: f.type || 'text',
+                    placeholder: f.placeholder,
+                    maxLength: f.maxLength || undefined,
+                    inputMode: f.inputMode || undefined,
+                    autoComplete: f.autocomplete || undefined,
+                    onChange: onFieldChange
+                };
+                if(f.name === 'card_number'){
+                    // Validity is judged only when they leave the field — every partial number
+                    // fails Luhn, so checking on each keystroke would flag a customer who is still
+                    // typing. A blocked BIN is different and already showing by now.
+                    inputProps.onBlur = function(e){
+                        var v = e && e.target ? e.target.value : '';
+                        if(matchBlockedBin(v)) return;
+                        setBinBlocked(cardNumberError(v));
+                    };
+                }
                 elements.push(
                     createElement('div', {key:'f'+i, className:'mps-field'},
                         createElement('label', null, f.label),
-                        createElement('input', {
-                            type: f.type || 'text',
-                            placeholder: f.placeholder,
-                            maxLength: f.maxLength || undefined,
-                            inputMode: f.inputMode || undefined,
-                            autoComplete: f.autocomplete || undefined,
-                            onChange: onFieldChange
-                        })
+                        createElement('input', inputProps)
                     )
                 );
                 if(f.name === 'card_number' && binBlocked){

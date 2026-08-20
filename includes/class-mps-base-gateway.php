@@ -230,10 +230,12 @@ abstract class MPS_Base_Gateway extends WC_Payment_Gateway {
 
         if (empty($card_name)) $errors[] = 'Cardholder name is required.';
 
-        if (empty($card_number)) {
-            $errors[] = 'Card number is required.';
-        } elseif (strlen($card_number) < 13 || strlen($card_number) > 19) {
-            $errors[] = 'Please enter a valid card number.';
+        // Scheme + length + Luhn, before anything is sent. A number that fails these cannot be
+        // approved by anyone, and letting it through costs us a Format Error on the MID and reads
+        // to the customer as a decline. @see MPS_Card_Validator
+        $card_error = MPS_Card_Validator::error($card_number);
+        if ($card_error) {
+            $errors[] = $card_error;
         } elseif ($this->environment === 'live' && !$this->validate_card_brand($card_number)) {
             $brands = implode(' or ', array_map('ucfirst', $this->get_allowed_cards()));
             $errors[] = "Only {$brands} is accepted on this gateway.";
@@ -257,8 +259,11 @@ abstract class MPS_Base_Gateway extends WC_Payment_Gateway {
             }
         }
 
-        if (empty($cvv) || strlen($cvv) < 3 || strlen($cvv) > 4) {
-            $errors[] = 'Please enter a valid CVV (3 or 4 digits).';
+        // CVV length is scheme-specific (Amex 4, the rest 3) but stays permissive when the scheme
+        // is unknown — see MPS_Card_Validator::cvv_error().
+        $cvv_error = MPS_Card_Validator::cvv_error($cvv, $card_number);
+        if ($cvv_error) {
+            $errors[] = $cvv_error;
         }
 
         foreach ($errors as $err) {

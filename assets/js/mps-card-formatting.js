@@ -89,11 +89,62 @@
 
 
     /**
-     * Blocked BINs — refuse a card the processor will never approve, as it is typed.
+     * Card number sanity: scheme, length, Luhn. Mirrors MPS_Card_Validator in PHP — change one,
+     * change both. Returns a message, or null when the number could be a real card.
      *
-     * Purely for immediate feedback: the server checks the same list before processing, so if this
-     * script is stripped or broken by an optimizer nothing gets through that should not. It only
-     * ever ADDS a message and disables the button; it never enables anything.
+     * Deliberately one generic message: the fix is the same whichever test failed, and naming the
+     * failing test would tell a card tester which digit to change.
+     */
+    var MPS_CARD_MESSAGE = 'Please check the card number and enter it again.';
+
+    function mpsCardSchemeLengths(pan){
+        var p2 = parseInt(pan.slice(0,2), 10), p3 = parseInt(pan.slice(0,3), 10),
+            p4 = parseInt(pan.slice(0,4), 10), p6 = parseInt(pan.slice(0,6), 10);
+        if(pan.charAt(0) === '4') return [13,16,19];                                  // Visa
+        if((p2 >= 51 && p2 <= 55) || (p4 >= 2221 && p4 <= 2720)) return [16];         // Mastercard
+        if(p2 === 34 || p2 === 37) return [15];                                       // Amex
+        if(p4 === 6011 || p2 === 65 || (p3 >= 644 && p3 <= 649) ||
+           (p6 >= 622126 && p6 <= 622925)) return [16,19];                            // Discover
+        if((p3 >= 300 && p3 <= 305) || p2 === 36 || p2 === 38) return [14,16,19];      // Diners
+        if(p4 >= 3528 && p4 <= 3589) return [16,17,18,19];                             // JCB
+        if(p2 === 62) return [16,17,18,19];                                            // UnionPay
+        return null;  // unknown range: new BINs appear, so fall back to the generic check
+    }
+
+    function mpsLuhn(pan){
+        var sum = 0, dbl = false, d;
+        for(var i = pan.length - 1; i >= 0; i--){
+            d = parseInt(pan.charAt(i), 10);
+            if(dbl){ d *= 2; if(d > 9){ d -= 9; } }
+            sum += d;
+            dbl = !dbl;
+        }
+        return sum % 10 === 0;
+    }
+
+    function mpsCardNumberError(value){
+        var pan = String(value || '').replace(/\D/g,'');
+        if(!pan) return null;                                   // empty is "not filled in yet"
+        if(pan.length < 12 || pan.length > 19) return MPS_CARD_MESSAGE;
+        if(/^(\d)\1+$/.test(pan)) return MPS_CARD_MESSAGE;      // 0000... passes Luhn, is not a card
+        var lengths = mpsCardSchemeLengths(pan);
+        if(lengths && lengths.indexOf(pan.length) === -1) return MPS_CARD_MESSAGE;
+        if(!mpsLuhn(pan)) return MPS_CARD_MESSAGE;
+        return null;
+    }
+
+    /**
+     * The two checks that share the message line under the card field:
+     *
+     *   - blocked BIN: a real card the processor will never approve. Known from the first digits,
+     *     so it fires as the number is typed, and the Place Order button is disabled — that state
+     *     is terminal, no amount of re-typing this card will help.
+     *   - invalid number: fails scheme/length/Luhn. Only checked on BLUR, because every partial
+     *     number fails Luhn and flagging a customer mid-type is wrong. The button is left alone;
+     *     they may still be editing, and the server refuses it anyway.
+     *
+     * Both are feedback only. The server repeats both checks before processing, so a stripped or
+     * broken script cannot let anything through.
      */
     function setupBinBlock(input){
         if(input.dataset.mpsBinBound) return;
@@ -101,8 +152,8 @@
 
         var rules;
         try { rules = JSON.parse(input.getAttribute('data-blocked-bins') || '[]'); }
-        catch(e){ return; }
-        if(!rules || !rules.length) return;
+        catch(e){ rules = []; }
+        if(!rules){ rules = []; }
 
         var notice = input.parentNode.querySelector('.mps-bin-blocked');
 
@@ -121,7 +172,7 @@
             return form ? form.querySelector('#place_order, button[type="submit"][name="woocommerce_checkout_place_order"]') : null;
         }
 
-        function check(){
+        function check(isFinal){
             var digits = (input.value || '').replace(/\D/g,'');
             var hit = match(digits);
             var btn = payButton();
@@ -133,22 +184,31 @@
                 }
                 input.classList.add('mps-input-error');
                 if(btn){ btn.disabled = true; btn.classList.add('mps-blocked-submit'); }
-            } else {
-                if(notice){ notice.style.display = 'none'; }
-                input.classList.remove('mps-input-error');
-                // Only re-enable a button THIS check disabled — another plugin may have its own
-                // reason for the button being disabled, and stealing that would be worse than the
-                // problem being solved.
-                if(btn && btn.classList.contains('mps-blocked-submit')){
-                    btn.disabled = false;
-                    btn.classList.remove('mps-blocked-submit');
-                }
+                return;
             }
+
+            // Not blocked. Release anything THIS check disabled — another plugin may have its own
+            // reason for the button being disabled, and stealing that would be worse than the
+            // problem being solved.
+            if(btn && btn.classList.contains('mps-blocked-submit')){
+                btn.disabled = false;
+                btn.classList.remove('mps-blocked-submit');
+            }
+
+            var invalid = isFinal ? mpsCardNumberError(digits) : null;
+            if(invalid){
+                if(notice){ notice.textContent = invalid; notice.style.display = ''; }
+                input.classList.add('mps-input-error');
+                return;
+            }
+
+            if(notice){ notice.style.display = 'none'; }
+            input.classList.remove('mps-input-error');
         }
 
-        input.addEventListener('input', check);
-        input.addEventListener('blur', check);
-        check();
+        input.addEventListener('input', function(){ check(false); });
+        input.addEventListener('blur', function(){ check(true); });
+        check(false);
     }
 
     function init(){

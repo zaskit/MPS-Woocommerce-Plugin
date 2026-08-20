@@ -61,6 +61,7 @@ add_action('plugins_loaded', function() {
     require_once MPS_PLUGIN_DIR . 'includes/class-mps-logger.php';
     require_once MPS_PLUGIN_DIR . 'includes/class-mps-portal-client.php';
     require_once MPS_PLUGIN_DIR . 'includes/class-mps-transaction-reporter.php';
+    require_once MPS_PLUGIN_DIR . 'includes/class-mps-card-validator.php';
     require_once MPS_PLUGIN_DIR . 'includes/class-mps-base-gateway.php';
     require_once MPS_PLUGIN_DIR . 'includes/class-mps-vprocessor-api.php';
     require_once MPS_PLUGIN_DIR . 'includes/class-mps-vprocessor-2d.php';
@@ -484,22 +485,7 @@ add_action('plugins_loaded', function() {
         $gateway  = $gateways[$gateway_id] ?? null;
         if (!$gateway || empty($gateway->blocked_bins)) return;
 
-        // Store API puts payment_data on the request; $_POST is the classic/bridged shape.
-        $card_number = '';
-        if ($request && isset($request['payment_data']) && is_array($request['payment_data'])) {
-            foreach ($request['payment_data'] as $field) {
-                $key = $field['key'] ?? '';
-                if ($key === 'card_number' || substr((string) $key, -12) === '_card_number') {
-                    $card_number = (string) ($field['value'] ?? '');
-                    break;
-                }
-            }
-        }
-        if ('' === $card_number) {
-            foreach ([$gateway_id . '_card_number', 'card_number'] as $key) {
-                if (!empty($_POST[$key])) { $card_number = sanitize_text_field(wp_unslash($_POST[$key])); break; }
-            }
-        }
+        $card_number = mps_store_api_card_number($gateway_id, $request);
         if ('' === $card_number) return;
 
         $blocked = MPS_BIN_Blocker::match($gateway->blocked_bins, $card_number);
@@ -517,6 +503,63 @@ add_action('plugins_loaded', function() {
         throw new Exception($blocked['message']);
     }
     add_action('woocommerce_store_api_checkout_update_order_from_request', 'mps_block_blocked_bins', 20, 2);
+
+    /**
+     * Scheme/length/Luhn validation for Block checkout.
+     *
+     * Same reason the BIN guard lives here: Block checkout never calls validate_fields(), so
+     * without this the only card validation on a Blocks store is the browser's — and JS can be
+     * broken by a theme or a script optimizer, which is exactly what v2.5.8 was about.
+     *
+     * Runs AFTER the BIN guard (priority 21) so a card that is both blocked and mistyped is
+     * reported as blocked: that is the more useful thing to tell the customer.
+     */
+    function mps_validate_card_store_api($order, $request = null) {
+        if (!$order instanceof WC_Order || !class_exists('MPS_Card_Validator')) return;
+
+        $gateway_id = (string) $order->get_payment_method();
+        if (strpos($gateway_id, 'mps_') !== 0) return;
+
+        $card_number = mps_store_api_card_number($gateway_id, $request);
+        // Hosted/redirect gateways collect the card on the processor's page — nothing to check.
+        if ('' === $card_number) return;
+
+        $error = MPS_Card_Validator::error($card_number);
+        if (!$error) return;
+
+        if (class_exists('\Automattic\WooCommerce\StoreApi\Exceptions\RouteException')) {
+            throw new \Automattic\WooCommerce\StoreApi\Exceptions\RouteException(
+                'mps_invalid_card', $error, 400
+            );
+        }
+        throw new Exception($error);
+    }
+    add_action('woocommerce_store_api_checkout_update_order_from_request', 'mps_validate_card_store_api', 21, 2);
+
+    /**
+     * The card number as it arrives on a Store API checkout request.
+     *
+     * The Store API puts the fields in payment_data; $_POST is the classic/bridged shape. Shared by
+     * the BIN guard and the validator so the two can never read different values for the same
+     * submission.
+     */
+    function mps_store_api_card_number($gateway_id, $request = null) {
+        if ($request && isset($request['payment_data']) && is_array($request['payment_data'])) {
+            foreach ($request['payment_data'] as $field) {
+                $key = $field['key'] ?? '';
+                if ($key === 'card_number' || substr((string) $key, -12) === '_card_number') {
+                    return (string) ($field['value'] ?? '');
+                }
+            }
+        }
+        foreach ([$gateway_id . '_card_number', 'card_number'] as $key) {
+            if (!empty($_POST[$key])) {
+                return sanitize_text_field(wp_unslash($_POST[$key]));
+            }
+        }
+
+        return '';
+    }
 
     /**
      * Read-only endpoint the Block checkout calls after a failed payment to fetch the decline message

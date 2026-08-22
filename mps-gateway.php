@@ -2,7 +2,7 @@
 /**
  * Plugin Name: MPS Gateway
  * Description: Connect your WooCommerce store to MPS Gateway for multi-processor payment processing. Transactions go directly to processors; the portal manages configuration.
- * Version: 2.7.0
+ * Version: 2.7.1
  * Author: ZASK
  * Author URI: https://zask.it
  * Requires at least: 6.0
@@ -32,7 +32,7 @@ if (defined('MPS_PLUGIN_FILE')) {
 
 define('MPS_PLUGIN_FILE', __FILE__);
 define('MPS_PLUGIN_DIR', plugin_dir_path(__FILE__));
-define('MPS_PLUGIN_VERSION', '2.7.0');
+define('MPS_PLUGIN_VERSION', '2.7.1');
 
 // HPOS compatibility
 add_action('before_woocommerce_init', function() {
@@ -793,15 +793,36 @@ add_action('plugins_loaded', function() {
     add_action('woocommerce_before_thankyou', 'mps_show_descriptor_thankyou', 10);
     add_action('woocommerce_email_before_order_table', 'mps_show_descriptor_email', 10, 4);
 
+    /**
+     * May this order's billing descriptor be shown to the customer yet?
+     *
+     * 🛑 Only AFTER the money has actually moved (client 2026-08-21: naming the descriptor before
+     * the transaction takes place "will lead to possible deactivation of your processing"). The
+     * order screens below are reachable well before that — the order-received page after a 3DS
+     * attempt that never completed, the customer invoice sent as a payment REMINDER, the on-hold
+     * and failed-order emails. All of those are pre-transaction, so none of them may name it.
+     * Checkout, which is earlier still, shows the descriptor-free billing notice instead
+     * (MPS_Monitor_Ack::disclosure_html).
+     *
+     * is_paid() covers the paid statuses; the date_paid check catches an order whose status has
+     * since moved on (cancelled after payment, for instance) but which really was charged.
+     */
+    function mps_descriptor_may_be_shown($order): bool {
+        if (!$order instanceof WC_Order) return false;
+        if (strpos($order->get_payment_method(), 'mps_') !== 0) return false;
+        if ('' === trim((string) $order->get_meta('_mps_descriptor'))) return false;
+
+        return $order->is_paid() || (bool) $order->get_date_paid();
+    }
+
     function mps_show_descriptor_thankyou($order_id) {
         $order = wc_get_order($order_id);
         if (!$order) return;
 
-        // Only for MPS gateway orders
-        if (strpos($order->get_payment_method(), 'mps_') !== 0) return;
+        // Only for MPS gateway orders, and only once the payment has actually gone through.
+        if (!mps_descriptor_may_be_shown($order)) return;
 
         $descriptor = $order->get_meta('_mps_descriptor');
-        if (empty($descriptor)) return;
 
         $contact = MPS_Merchant_Contact::all();
 
@@ -839,10 +860,12 @@ add_action('plugins_loaded', function() {
 
     function mps_show_descriptor_email($order, $sent_to_admin, $plain_text, $email) {
         if ($sent_to_admin) return;
-        if (strpos($order->get_payment_method(), 'mps_') !== 0) return;
+
+        // Paid orders only — the invoice can go out as a payment reminder, and the on-hold and
+        // failed-order mails are sent on orders that were never charged. @see the rule above.
+        if (!mps_descriptor_may_be_shown($order)) return;
 
         $descriptor = $order->get_meta('_mps_descriptor');
-        if (empty($descriptor)) return;
 
         $contact = MPS_Merchant_Contact::all();
         $who = $contact['name'] ?: __('us', 'mps-gateway');

@@ -18,7 +18,7 @@ defined('ABSPATH') || exit;
 class MPS_BIN_Blocker {
 
     /** Shown when the portal record carries no message of its own. */
-    const DEFAULT_MESSAGE = 'This card cannot be used on this store. Please try a different card.';
+    const DEFAULT_MESSAGE = 'This card cannot be used at this store. Please try a different card.';
 
     /**
      * The rule matching this card number, or null.

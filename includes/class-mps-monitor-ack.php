@@ -15,8 +15,11 @@
  * chargeback PDF. This class contributes only the explanatory text above it, on both checkouts,
  * from one string.
  *
- * OFF by default. The descriptor is deliberately not public-facing (client 2026-07-22); a merchant
- * who wants it disclosed at checkout turns this on.
+ * OFF by default. 🛑 The billing descriptor is never named here: pre-transaction disclosure of it
+ * is a compliance breach that can get a merchant's processing deactivated (client 2026-08-21). What
+ * this shows instead is the client's Billing Notice — the statement name will differ, it is given
+ * after payment, and support questions go to the merchant. A merchant who wants that notice at
+ * checkout turns this on.
  */
 
 defined( 'ABSPATH' ) || exit;
@@ -41,15 +44,25 @@ class MPS_Monitor_Ack {
 	/**
 	 * The disclosure markup, used by BOTH checkouts so the wording can never drift between them.
 	 *
-	 * @param object|null $gateway The MPS gateway being rendered, for its portal descriptor.
+	 * @param object|null $gateway The MPS gateway being rendered. Its portal descriptor decides
+	 *                              whether the Billing Notice is shown — it is never printed.
 	 */
 	public static function disclosure_html( $gateway = null ): string {
 		if ( ! self::is_enabled() ) {
 			return '';
 		}
 
-		// The descriptor as the portal assigned it to this merchant. No order exists yet at
-		// checkout, so it comes off the live gateway config rather than _mps_descriptor.
+		/*
+		 * 🛑 COMPLIANCE — the descriptor is NEVER named before the charge (client 2026-08-21:
+		 * "for compliance we cannot put the name of the descriptor before the transaction …
+		 * only after the transaction takes place"). It is read here ONLY to decide whether there
+		 * is a different statement name to warn about; the value itself must not reach the page.
+		 * Naming it belongs to the post-purchase surfaces — thank-you page, order emails and
+		 * MPS_Billing_Notice_Email — which all fire after the payment completes.
+		 *
+		 * No order exists yet at checkout, so it comes off the live gateway config rather than
+		 * _mps_descriptor.
+		 */
 		$descriptor = '';
 		if ( is_object( $gateway ) && isset( $gateway->portal_descriptor ) ) {
 			$descriptor = trim( (string) $gateway->portal_descriptor );
@@ -61,24 +74,24 @@ class MPS_Monitor_Ack {
 		 * moment they are most likely to go looking (2026-08-20 — an Nxtstate customer googled the
 		 * descriptor and phoned the MID holder), and it is not even true on every processor — the
 		 * A-Processor stack settles to the merchant's own domestic Authorize.Net. The disclosure
-		 * keeps its dispute-defence job: warn about a first-attempt decline, and name the descriptor.
+		 * keeps its dispute-defence job: warn about a first-attempt decline, and warn that the
+		 * statement name will differ — without saying what it is.
 		 */
 		$items = array(
 			'Some banks may <strong>decline the first attempt</strong> as a fraud protection measure. If that happens, a quick call to your bank to authorize the purchase will normally allow it to go through.',
 		);
 
-		// Only claim a descriptor we actually have — an empty "appears as" line invites the
-		// chargeback the sentence exists to prevent.
+		// Only warn about the statement name when this merchant actually has a descriptor assigned:
+		// without one there is nothing for the statement to differ from, and the sentence would
+		// puzzle the customer rather than prepare them. Checked, never printed — see above.
 		if ( '' !== $descriptor ) {
 			$merchant = class_exists( 'MPS_Merchant_Contact' )
 				? ( MPS_Merchant_Contact::name() ?: get_bloginfo( 'name' ) )
 				: get_bloginfo( 'name' );
 
+			// The client's own wording, verbatim (2026-08-21), with the merchant name substituted.
 			$items[] = sprintf(
-				'The charge will appear on your statement as <strong>%s</strong>, not %s. %s is a billing descriptor only — for anything to do with your order, contact %s.',
-				esc_html( $descriptor ),
-				esc_html( $merchant ),
-				esc_html( $descriptor ),
+				'<strong>Billing Notice:</strong> Your bank statement may show a different name than %1$s. The exact billing name will be provided after your payment is completed. For any order, refund, or support questions, contact %1$s only.',
 				esc_html( $merchant )
 			);
 		}

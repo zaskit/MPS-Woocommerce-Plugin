@@ -303,18 +303,13 @@ class MPS_Monitor_Notifier {
 			(<?php echo wp_kses_post( wc_price( $row->amount, array( 'currency' => $row->currency ) ) ); ?>).
 			Your order is being held and nothing has been charged.
 		</p>
-		<?php /* The descriptor is stated twice on purpose — here and again in the payments note
-		         below. Customers who do not recognise the descriptor on a statement raise
-		         chargebacks, so it has to be impossible to miss. Client request 2026-08-04.
-		         It comes from the order (_mps_descriptor, i.e. the portal's assignment for this
-		         merchant), so it is right per store and per charge. Omitted entirely when unknown —
-		         an empty "appears as" sentence would be worse than no sentence. */ ?>
-		<?php if ( '' !== $descriptor ) : ?>
-		<p style="margin:0 0 20px;padding:14px 16px;background:#fffbeb;border:1px solid #fcd34d;border-left:5px solid #f59e0b;border-radius:8px;font-size:15px;line-height:1.6;color:#451a03;">
-			<strong>Please note:</strong> the charge appears on your statement as
-			<strong style="letter-spacing:.04em;"><?php echo esc_html( $descriptor ); ?></strong>, not <?php echo esc_html( $merchant ); ?>.
-		</p>
-		<?php endif; ?>
+		<?php /* 🛑 The descriptor used to be named here, and again in the payments note below
+		         (client request 2026-08-04, so a customer would recognise it on a statement).
+		         Both are gone as of 2026-08-21: naming the descriptor before the transaction has
+		         taken place is a compliance breach that can get the merchant's processing
+		         deactivated — and on THIS email it was not even true, because the payment failed
+		         and nothing reached the customer's statement. What is left is the billing notice
+		         below, which warns that the name will differ without saying what it is. */ ?>
 	</div>
 
 	<div style="margin:0 32px 22px;padding:18px 20px;background:<?php echo esc_attr( $tint ); ?>;border:1px solid <?php echo esc_attr( $border ); ?>;border-left:5px solid <?php echo esc_attr( $accent ); ?>;border-radius:8px;">
@@ -343,12 +338,15 @@ class MPS_Monitor_Notifier {
 			purchase they have not seen before. A quick call to your bank to approve the purchase
 			normally clears it, and a different card usually works too.
 		</p>
+		<?php /* The client's own Billing Notice wording (2026-08-21), written for the moment
+		         before a payment completes. $descriptor is read only to know that a different
+		         statement name exists — it is never printed on this email. */ ?>
 		<?php if ( '' !== $descriptor ) : ?>
 		<p style="margin:0;padding:12px 14px;background:#fffbeb;border:1px solid #fcd34d;border-radius:6px;font-size:14px;line-height:1.6;color:#451a03;">
-			<strong>On your statement</strong> this purchase appears as
-			<strong style="letter-spacing:.04em;"><?php echo esc_html( $descriptor ); ?></strong>, not <?php echo esc_html( $merchant ); ?>.
-			<?php echo esc_html( $descriptor ); ?> is a billing descriptor only — please do not contact it.
-			For anything to do with this order, contact <?php echo esc_html( $merchant ); ?><?php echo $contact ? ' at ' . esc_html( $contact ) : ''; ?>.
+			<strong>Billing Notice:</strong> Your bank statement may show a different name than
+			<?php echo esc_html( $merchant ); ?>. The exact billing name will be provided after your
+			payment is completed. For any order, refund, or support questions, contact
+			<?php echo esc_html( $merchant ); ?> only.
 		</p>
 		<?php endif; ?>
 	</div>

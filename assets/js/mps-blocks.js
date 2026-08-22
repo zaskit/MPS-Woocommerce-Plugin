@@ -242,7 +242,7 @@
                     if(blockedHit){
                         return {
                             type: emitResponse.responseTypes.ERROR,
-                            message: blockedHit.message || 'This card cannot be used on this store. Please try a different card.'
+                            message: blockedHit.message || 'This card cannot be used at this store. Please try a different card.'
                         };
                     }
 
@@ -310,7 +310,7 @@
                         var hit = matchBlockedBin(v);
                         // Both of these are known from the first digits, so they show while typing.
                         setBinBlocked(hit
-                            ? (hit.message || 'This card cannot be used on this store. Please try a different card.')
+                            ? (hit.message || 'This card cannot be used at this store. Please try a different card.')
                             : brandError(v, dataVar.allowed_cards));
                         return inner(e);
                     };

@@ -186,7 +186,7 @@
 
             if(hit){
                 if(notice){
-                    notice.textContent = hit.message || 'This card cannot be used on this store. Please try a different card.';
+                    notice.textContent = hit.message || 'This card cannot be used at this store. Please try a different card.';
                     notice.style.display = '';
                 }
                 input.classList.add('mps-input-error');

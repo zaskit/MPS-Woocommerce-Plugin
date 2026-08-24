@@ -17,8 +17,27 @@ defined('ABSPATH') || exit;
 
 class MPS_BIN_Blocker {
 
-    /** Shown when the portal record carries no message of its own. */
+    /** Shown when the portal record carries no message of its own, and no merchant name resolves. */
     const DEFAULT_MESSAGE = 'This card cannot be used at this store. Please try a different card.';
+
+    /**
+     * The default refusal, naming the merchant where we can.
+     *
+     * "this store" is vague at the one moment the customer is deciding whether the problem is them
+     * or us; naming the merchant says plainly which shop refused the card, and matches how every
+     * other post-2026-08-20 customer-facing string identifies the merchant rather than the
+     * processor (client 2026-08-21). Falls back to the generic wording when no name resolves, so
+     * the sentence can never render with a hole in it.
+     */
+    public static function default_message(): string {
+        $merchant = class_exists('MPS_Merchant_Contact') ? MPS_Merchant_Contact::name() : '';
+
+        if ('' === $merchant) {
+            return self::DEFAULT_MESSAGE;
+        }
+
+        return sprintf('This card cannot be used at %s. Please try a different card.', $merchant);
+    }
 
     /**
      * The rule matching this card number, or null.
@@ -44,7 +63,7 @@ class MPS_BIN_Blocker {
             if (strlen($digits) >= strlen($bin) && 0 === strncmp($digits, $bin, strlen($bin))) {
                 return [
                     'bin'     => $bin,
-                    'message' => trim((string) ($rule['message'] ?? '')) ?: self::DEFAULT_MESSAGE,
+                    'message' => trim((string) ($rule['message'] ?? '')) ?: self::default_message(),
                 ];
             }
         }

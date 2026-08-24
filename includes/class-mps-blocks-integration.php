@@ -56,6 +56,9 @@ class MPS_Blocks_Integration extends AbstractPaymentMethodType {
             // BINs this processor never approves, so the Block checkout can refuse the card as it
             // is typed. The server checks again before processing — see mps_block_blocked_bins().
             'blocked_bins' => $this->gateway->blocked_bins ?? [],
+            // Default refusal wording, already resolved to the merchant's name server-side so the
+            // Block checkout cannot render a different sentence from classic.
+            'blocked_message' => class_exists('MPS_BIN_Blocker') ? MPS_BIN_Blocker::default_message() : '',
             // Card schemes this merchant accepts (portal allowed_cards). Block checkout had no
             // brand awareness at all before v2.5.9 — client or server.
             'allowed_cards' => method_exists($this->gateway, 'get_allowed_cards') ? $this->gateway->get_allowed_cards() : [],

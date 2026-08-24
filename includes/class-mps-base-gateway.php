@@ -114,7 +114,7 @@ abstract class MPS_Base_Gateway extends WC_Payment_Gateway {
                           with no request. It is only a BIN list — no customer data — and the server
                           checks again in validate_fields() regardless, so a stripped or broken
                           script costs nothing but the instant feedback. */ ?>
-                <input type="text" name="<?php echo $prefix; ?>_card_number" inputmode="numeric" maxlength="23" placeholder="0000 0000 0000 0000" autocomplete="cc-number" data-mc-only="<?php echo $mc_only ? '1' : '0'; ?>" data-allowed-cards="<?php echo esc_attr(wp_json_encode(array_values($allowed))); ?>" data-blocked-bins="<?php echo esc_attr(wp_json_encode($this->blocked_bins)); ?>" required>
+                <input type="text" name="<?php echo $prefix; ?>_card_number" inputmode="numeric" maxlength="23" placeholder="0000 0000 0000 0000" autocomplete="cc-number" data-mc-only="<?php echo $mc_only ? '1' : '0'; ?>" data-allowed-cards="<?php echo esc_attr(wp_json_encode(array_values($allowed))); ?>" data-blocked-bins="<?php echo esc_attr(wp_json_encode($this->blocked_bins)); ?>" data-blocked-msg="<?php echo esc_attr(MPS_BIN_Blocker::default_message()); ?>" required>
                 <div class="mps-bin-blocked" role="alert" style="display:none"></div>
             </div>
             <div class="mps-row">

@@ -162,6 +162,10 @@
         try { allowed = JSON.parse(input.getAttribute('data-allowed-cards') || '[]'); }
         catch(e){ allowed = []; }
 
+        // Resolved server-side so it already names the merchant; the literal below is only for a
+        // page rendered by a version that did not send the attribute.
+        var blockedMsg = input.getAttribute('data-blocked-msg') || 'This card cannot be used at this store. Please try a different card.';
+
         var notice = input.parentNode.querySelector('.mps-bin-blocked');
 
         function match(digits){
@@ -186,7 +190,7 @@
 
             if(hit){
                 if(notice){
-                    notice.textContent = hit.message || 'This card cannot be used at this store. Please try a different card.';
+                    notice.textContent = hit.message || blockedMsg;
                     notice.style.display = '';
                 }
                 input.classList.add('mps-input-error');

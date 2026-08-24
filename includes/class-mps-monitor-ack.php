@@ -77,6 +77,8 @@ class MPS_Monitor_Ack {
 		 * keeps its dispute-defence job: warn about a first-attempt decline, and warn that the
 		 * statement name will differ — without saying what it is.
 		 */
+		$merchant = '';
+
 		$items = array(
 			'Some banks may <strong>decline the first attempt</strong> as a fraud protection measure. If that happens, a quick call to your bank to authorize the purchase will normally allow it to go through.',
 		);
@@ -89,6 +91,17 @@ class MPS_Monitor_Ack {
 				? ( MPS_Merchant_Contact::name() ?: get_bloginfo( 'name' ) )
 				: get_bloginfo( 'name' );
 
+			/*
+			 * 🛑 The notice names the merchant TWICE and is the customer's only instruction on who
+			 * to contact. With no name to substitute it would render "...a different name than .
+			 * ... contact  only." — a broken sentence on a compliance notice, which is worse than
+			 * showing nothing. Both sources above can be empty on a bare install, so drop the whole
+			 * item rather than print a hole in it.
+			 */
+			$merchant = trim( (string) $merchant );
+		}
+
+		if ( '' !== $descriptor && '' !== $merchant ) {
 			// The client's own wording, verbatim (2026-08-21), with the merchant name substituted.
 			$items[] = sprintf(
 				'<strong>Billing Notice:</strong> Your bank statement may show a different name than %1$s. The exact billing name will be provided after your payment is completed. For any order, refund, or support questions, contact %1$s only.',

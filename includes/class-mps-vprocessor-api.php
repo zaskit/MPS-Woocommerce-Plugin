@@ -3,6 +3,9 @@ defined('ABSPATH') || exit;
 
 class MPS_VProcessor_API {
 
+    /** Sent on every request we make to V-Processor. */
+    const INTEGRATION_SOURCE = 'breeopay-plugin';
+
     public static function endpoint(string $env, string $type, string $version = '1'): string {
         $base = ($env === 'live') ? 'https://vsafe.tech' : 'https://sandbox.vsafe.tech';
         return $base . '/api/v' . $version . '/' . $type . '/';
@@ -16,8 +19,10 @@ class MPS_VProcessor_API {
         $json = wp_json_encode($body, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
         return wp_remote_post($url, [
             'headers' => [
-                'Content-Type' => 'application/json',
-                'Signature'    => self::sign($key, $json),
+                'Content-Type'         => 'application/json',
+                'Signature'            => self::sign($key, $json),
+                // Lets V-Processor attribute the traffic to this plugin (their dev team's ask, 2026-08-27).
+                'X-Integration-Source' => self::INTEGRATION_SOURCE,
             ],
             'body'    => $json,
             'timeout' => $timeout,

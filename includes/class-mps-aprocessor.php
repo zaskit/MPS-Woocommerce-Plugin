@@ -45,7 +45,7 @@ class MPS_AProcessor extends MPS_Base_Gateway {
     /**
      * Create the checkout session on the portal, then redirect to the cloak pay page.
      */
-    public function process_payment($order_id): array {
+    protected function process_payment_inner($order_id): array {
         $order = wc_get_order($order_id);
 
         // Where MPS sends the customer after the charge. We confirm the result here.

@@ -36,7 +36,7 @@ class MPS_KProcessor extends MPS_Base_Gateway {
     /**
      * Process payment: create session on Payvelonix, redirect customer.
      */
-    public function process_payment($order_id): array {
+    protected function process_payment_inner($order_id): array {
         $order = wc_get_order($order_id);
 
         $checkout_url = rtrim($this->credentials['checkout_url'] ?? '', '/');

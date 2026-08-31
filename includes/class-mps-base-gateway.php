@@ -87,6 +87,102 @@ abstract class MPS_Base_Gateway extends WC_Payment_Gateway {
     }
 
     /**
+     * ─── DUPLICATE-CHARGE GUARD (v2.6.0) ────────────────────────────────────────────────────────
+     *
+     * vSafe, 2026-08-13: the Pay button stayed clickable while a charge was in flight, so customers
+     * clicked again and paid twice. It was real — on live, SEVEN orders carried two APPROVED charges,
+     * five of them seconds apart with identical amounts (order 41118: 2 x $198.02, one second apart).
+     *
+     * 🛑 The button guard in JS is NOT enough on its own, which is why this exists server-side too.
+     * Client-side protection dies with a JS error, an optimizer reordering scripts (the exact class
+     * of bug behind v2.5.8), a double-tap landing before the handler binds, a back-button resubmit,
+     * or a network-level retry. This is the layer that actually cannot be bypassed by the browser.
+     *
+     * 🔑 THIS IS A CONCURRENCY GUARD, NOT A ONE-ATTEMPT-PER-ORDER RULE. 2,579 of 9,071 live orders
+     * have more than one attempt and the overwhelming majority are customers legitimately retrying
+     * after a decline. Blocking those would cost far more than the duplicates do. So the lock is held
+     * only for the length of one in-flight request and released in `finally`; sequential retries are
+     * completely unaffected.
+     *
+     * Subclasses implement `process_payment_inner()`. Declaring this `final` means a new processor
+     * cannot accidentally opt out of the guard by defining its own `process_payment()`.
+     */
+    final public function process_payment($order_id): array {
+        $order = wc_get_order($order_id);
+        if (!$order) return ['result' => 'fail'];
+
+        // Already paid — never send a second charge for the same order. This is what catches the
+        // click that arrives AFTER the first one succeeded.
+        if (!$order->needs_payment()) {
+            $this->log("Duplicate submit ignored: order {$order_id} is already paid.");
+            return ['result' => 'success', 'redirect' => $this->get_return_url($order)];
+        }
+
+        if (!$this->acquire_payment_lock($order_id)) {
+            $this->log("Duplicate submit blocked: a charge for order {$order_id} is already in flight.");
+            // Thrown, not wc_add_notice + 'fail': the Store API discards notices and substitutes its
+            // own generic message — same reason the decline path throws (see MPS_VProcessor_2D).
+            throw new Exception(__('Your payment is already being processed. Please wait a moment before trying again.', 'mps-gateway'));
+        }
+
+        try {
+            return $this->process_payment_inner($order_id);
+        } finally {
+            // Always released. On success the `needs_payment()` check above takes over; on failure or
+            // an off-site redirect (3DS / hosted) the order must stay retryable.
+            $this->release_payment_lock($order_id);
+        }
+    }
+
+    /** Each processor's real payment logic. */
+    abstract protected function process_payment_inner($order_id): array;
+
+    private function payment_lock_key($order_id): string {
+        return 'mps_pay_lock_' . (int) $order_id;
+    }
+
+    /**
+     * Atomic across concurrent PHP workers. `INSERT IGNORE` against the UNIQUE index on
+     * `option_name` is decided by the database, so exactly one of two simultaneous requests can win.
+     *
+     * ⚠️ Deliberately NOT `add_option()` / transients: both read-then-write in PHP, so two workers
+     * can pass the check at the same time — precisely the race being defended against here.
+     */
+    protected function acquire_payment_lock($order_id, int $ttl = 120): bool {
+        global $wpdb;
+        $key = $this->payment_lock_key($order_id);
+
+        $inserted = $wpdb->query($wpdb->prepare(
+            "INSERT IGNORE INTO {$wpdb->options} (option_name, option_value, autoload) VALUES (%s, %s, 'no')",
+            $key, (string) time()
+        ));
+
+        if ($inserted === 1) {
+            wp_cache_delete('notoptions', 'options');
+            return true;
+        }
+
+        // A lock already exists. If it is older than the TTL its request died mid-flight (fatal,
+        // timeout, worker killed) — steal it rather than wedging the order until someone notices.
+        $started = (int) $wpdb->get_var($wpdb->prepare(
+            "SELECT option_value FROM {$wpdb->options} WHERE option_name = %s", $key
+        ));
+        if ($started && (time() - $started) > $ttl) {
+            $wpdb->update($wpdb->options, ['option_value' => (string) time()], ['option_name' => $key]);
+            $this->log("Stale payment lock on order {$order_id} reclaimed after {$ttl}s.");
+            return true;
+        }
+
+        return false;
+    }
+
+    protected function release_payment_lock($order_id): void {
+        global $wpdb;
+        $wpdb->delete($wpdb->options, ['option_name' => $this->payment_lock_key($order_id)]);
+        wp_cache_delete('notoptions', 'options');
+    }
+
+    /**
      * Render card input fields + cardholder billing address on checkout.
      * Matches Merchant Payment Gateway plugin design.
      */

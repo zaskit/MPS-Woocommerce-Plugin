@@ -29,7 +29,7 @@ class MPS_EProcessor_Hosted extends MPS_Base_Gateway {
         return true;
     }
 
-    public function process_payment($order_id): array {
+    protected function process_payment_inner($order_id): array {
         $order = wc_get_order($order_id);
 
         $account_id  = $this->credentials['account_id'] ?? '';

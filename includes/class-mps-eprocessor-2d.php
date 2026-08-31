@@ -12,7 +12,7 @@ class MPS_EProcessor_2D extends MPS_Base_Gateway {
         add_action('wp_ajax_nopriv_mps_ep2d_poll_status', [$this, 'ajax_poll_status']);
     }
 
-    public function process_payment($order_id): array {
+    protected function process_payment_inner($order_id): array {
         $order = wc_get_order($order_id);
         $card  = $this->get_card_data();
 

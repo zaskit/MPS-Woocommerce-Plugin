@@ -33,6 +33,9 @@ class MPS_Portal_Client {
         return [
             'X-Api-Key'    => $settings['api_key'] ?? '',
             'X-Api-Secret' => $settings['api_secret'] ?? '',
+            // v2.8.0: lets the portal send features only this version understands (a "Test" gateway
+            // must never reach a plugin that would show it to every customer).
+            'X-MPS-Plugin-Version' => defined('MPS_PLUGIN_VERSION') ? MPS_PLUGIN_VERSION : '',
             'Content-Type' => 'application/json',
             'Accept'       => 'application/json',
         ];

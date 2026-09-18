@@ -148,6 +148,19 @@
         var is3ds = !!dataVar.supports_3ds;
         var hasFields = !!dataVar.has_fields && dataVar.has_fields !== '0' && dataVar.has_fields !== '';
 
+        // Same wording as MPS_Base_Gateway::ticket_limit_message() — the server sends both sentences.
+        var ticketLimitMessage = function(billing){
+            var min = dataVar.ticket_min, max = dataVar.ticket_max;
+            if((min === null || min === undefined) && (max === null || max === undefined)) return '';
+            var ct = billing && billing.cartTotal;
+            if(!ct || ct.value === undefined) return '';
+            var minor = billing.currency && billing.currency.minorUnit !== undefined ? billing.currency.minorUnit : 2;
+            var total = Number(ct.value) / Math.pow(10, minor);
+            if(min !== null && min !== undefined && total > 0 && total < Number(min)) return dataVar.ticket_min_message || '';
+            if(max !== null && max !== undefined && total > Number(max)) return dataVar.ticket_max_message || '';
+            return '';
+        };
+
         var Content = function(props){
             var eventRegistration = props.eventRegistration;
             var emitResponse = props.emitResponse;
@@ -157,6 +170,14 @@
             // charge_ack starts set: the acknowledgment is mandatory and renders ticked, so the
             // consent is already given by the time the customer can submit.
             var stateRef = window.wp.element.useRef(dataVar.ack_text ? {charge_ack:'1'} : {});
+
+            // v2.8.0 — the processor's ticket range (E: $10–$2,000). Out of range, the method stays
+            // visible but says why instead of showing a card form that can only be declined. Kept in a
+            // ref so the payment-setup callback reads the CURRENT total. The server refuses again in
+            // process_payment(), so a broken script costs the message, not the protection.
+            var limitMsg = ticketLimitMessage(props.billing);
+            var limitRef = window.wp.element.useRef(limitMsg);
+            limitRef.current = limitMsg;
             var ackBlockedState = window.wp.element.useState(false);
             var ackBlocked = ackBlockedState[0], setAckBlocked = ackBlockedState[1];
             // Blocked BIN typed into the card field. Immediate feedback only — the server checks
@@ -261,6 +282,10 @@
                         paymentData[key] = s[key] || '';
                     }
 
+                    if(limitRef.current){
+                        return { type: emitResponse.responseTypes.ERROR, message: limitRef.current };
+                    }
+
                     // Refuse to submit a card the processor will never approve. Read off the ref,
                     // not component state, so this is the value in the field right now rather than
                     // whatever it was when this callback was subscribed.
@@ -320,6 +345,14 @@
             // Description
             if(dataVar.description){
                 elements.push(createElement('p', {key:'desc', style:{marginBottom:'12px',fontSize:'14px',color:'#6b7280'}}, decodeEntities(dataVar.description)));
+            }
+
+            if(limitMsg){
+                elements.push(createElement('div', {
+                    key:'limit', className:'mps-ticket-limit', role:'alert',
+                    style:{padding:'10px 12px',borderRadius:'6px',background:'#fef3c7',color:'#92400e',fontSize:'14px',lineHeight:'1.4'}
+                }, limitMsg));
+                return createElement('div', { className: 'mps-card-form' }, elements);
             }
 
             // Card fields (skip for hosted gateways)

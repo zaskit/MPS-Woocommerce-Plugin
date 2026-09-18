@@ -20,6 +20,7 @@ class MPS_EProcessor_Hosted extends MPS_Base_Gateway {
         if ($this->description) {
             echo '<div class="mps-hosted-notice" style="padding:12px 0;">' . wpautop(wp_kses_post($this->description)) . '</div>';
         }
+        $this->render_ticket_limit_notice();
     }
 
     /**
@@ -376,38 +377,7 @@ class MPS_EProcessor_Hosted extends MPS_Base_Gateway {
 
     public function process_refund($order_id, $amount = null, $reason = ''): bool|\WP_Error {
         $order = wc_get_order($order_id);
-        $tx_id = $order->get_meta('_mps_ep_transaction_id');
-
-        if (!$tx_id) {
-            return new \WP_Error('no_tx', 'No transaction ID found.');
-        }
-
-        $account_id = $this->credentials['account_id'] ?? '';
-        $password   = $this->credentials['account_password'] ?? '';
-        $passphrase = $this->credentials['account_passphrase'] ?? '';
-
-        $sha = MPS_EProcessor_API::sha_refund($passphrase, $account_id, $tx_id);
-
-        $data = [
-            'account_id'       => $account_id,
-            'account_password' => $password,
-            'account_sha'      => $sha,
-            'trans_id'         => $tx_id,
-            'option'           => '',
-        ];
-
-        $response = MPS_EProcessor_API::post(MPS_EProcessor_API::REFUND_URL, $data);
-
-        if (is_wp_error($response)) {
-            return new \WP_Error('api_error', $response->get_error_message());
-        }
-
-        $result = MPS_EProcessor_API::parse_response($response);
-        if ($result && ($result['resp_trans_status'] ?? '') === '00000') {
-            $order->add_order_note(sprintf('EP Hosted Refund approved: %s %s', $amount, $order->get_currency()));
-            return true;
-        }
-
-        return new \WP_Error('refund_failed', $result['resp_trans_description_status'] ?? 'Refund failed');
+        if (!$order) return new \WP_Error('no_order', 'Order not found.');
+        return MPS_EProcessor_API::refund($this->credentials, $order, $amount, 'EP Hosted');
     }
 }

@@ -16,6 +16,11 @@ abstract class MPS_Base_Gateway extends WC_Payment_Gateway {
     public    string $portal_descriptor;
     /** BINs this processor will never approve, longest-first, from the portal. */
     public    array  $blocked_bins;
+    /** v2.8.0: a gateway in the portal's "Test" state — shown to the store's admins only. */
+    public    bool   $admin_only;
+    /** v2.8.0: the processor refuses orders outside this range (E: $10–$2,000). Null = no limit. */
+    public    ?float $ticket_min;
+    public    ?float $ticket_max;
 
     public function __construct(array $gateway_config) {
         $this->portal_gateway_id = (int) ($gateway_config['id'] ?? 0);
@@ -30,6 +35,9 @@ abstract class MPS_Base_Gateway extends WC_Payment_Gateway {
         $this->allowed_cards     = $gateway_config['allowed_cards'] ?? $this->supported_cards;
         $this->portal_descriptor = $gateway_config['descriptor'] ?? '';
         $this->blocked_bins      = is_array($gateway_config['blocked_bins'] ?? null) ? $gateway_config['blocked_bins'] : [];
+        $this->admin_only        = !empty($gateway_config['admin_only']);
+        $this->ticket_min        = isset($gateway_config['min_amount']) && is_numeric($gateway_config['min_amount']) ? (float) $gateway_config['min_amount'] : null;
+        $this->ticket_max        = isset($gateway_config['max_amount']) && is_numeric($gateway_config['max_amount']) ? (float) $gateway_config['max_amount'] : null;
 
         // Gateway ID: mps_{code}_{type}_{portal_id}
         $this->id = 'mps_' . $this->processor_code . '_' . $this->processor_type . '_' . $this->portal_gateway_id;
@@ -59,6 +67,10 @@ abstract class MPS_Base_Gateway extends WC_Payment_Gateway {
         $stored_desc  = $main_settings['desc_' . $this->id] ?? '';
         $this->title       = ($stored_title !== '') ? $stored_title : $default_title;
         $this->description = ($stored_desc  !== '') ? $stored_desc  : $default_desc;
+        // Only store admins ever see a Test gateway; make sure they can tell it is one.
+        if ($this->admin_only) {
+            $this->title .= ' [TEST — admins only]';
+        }
         // Leave method_title and method_description empty so WC treats these as "shell" gateways.
         // WC hides shells from the admin Payments list when a non-shell gateway (MPS_Settings_Gateway)
         // exists from the same plugin. The individual processors still appear at checkout.
@@ -111,6 +123,17 @@ abstract class MPS_Base_Gateway extends WC_Payment_Gateway {
         $order = wc_get_order($order_id);
         if (!$order) return ['result' => 'fail'];
 
+        // v2.8.0 — checked before anything is sent. A test gateway is for the store's admins only, and an
+        // order outside the processor's ticket range would only come back declined (and the declined
+        // attempt is still billed). Thrown, like the duplicate guard below, so Block checkout shows it.
+        if ($this->admin_only && !self::current_user_is_store_admin()) {
+            throw new Exception(__('This payment method is not available.', 'mps-gateway'));
+        }
+        $limit = $this->ticket_limit_message((float) $order->get_total());
+        if ($limit) {
+            throw new Exception($limit);
+        }
+
         // Already paid — never send a second charge for the same order. This is what catches the
         // click that arrives AFTER the first one succeeded.
         if (!$order->needs_payment()) {
@@ -132,6 +155,58 @@ abstract class MPS_Base_Gateway extends WC_Payment_Gateway {
             // an off-site redirect (3DS / hosted) the order must stay retryable.
             $this->release_payment_lock($order_id);
         }
+    }
+
+    /** Store admins — who may see a gateway the portal has in "Test". */
+    public static function current_user_is_store_admin(): bool {
+        return is_user_logged_in() && current_user_can('manage_woocommerce');
+    }
+
+    /**
+     * Hidden from customers while the portal has this gateway in "Test" (v2.8.0). The Store API builds
+     * Block checkout's list from the same availability check, so this covers both checkouts.
+     */
+    public function is_available() {
+        if ($this->admin_only && !self::current_user_is_store_admin()) {
+            return false;
+        }
+        return parent::is_available();
+    }
+
+    /**
+     * The customer-facing reason this order total cannot be paid here, or null when it can (v2.8.0).
+     * Simon 2026-09-18: keep the option visible and say why — over the maximum it will not be approved;
+     * under the minimum they need to add to the cart.
+     */
+    public function ticket_limit_message(float $total): ?string {
+        if ($this->ticket_min !== null && $total > 0 && $total < $this->ticket_min) {
+            return sprintf(__('Card payments need an order of at least %s. Please add more to your cart.', 'mps-gateway'),
+                '$' . number_format($this->ticket_min, 2));
+        }
+        if ($this->ticket_max !== null && $total > $this->ticket_max) {
+            return sprintf(__('Card payments are limited to %s per order, so this order will not be approved. Please reduce your cart or split it into smaller orders.', 'mps-gateway'),
+                '$' . number_format($this->ticket_max, 2));
+        }
+        return null;
+    }
+
+    /** The total being paid on this page: the cart at checkout, the order on the pay-for-order page. */
+    protected function checkout_total(): ?float {
+        $pay_id = absint(get_query_var('order-pay'));
+        if ($pay_id) {
+            $order = wc_get_order($pay_id);
+            return $order ? (float) $order->get_total() : null;
+        }
+        return (function_exists('WC') && WC()->cart) ? (float) WC()->cart->get_total('edit') : null;
+    }
+
+    /** Prints the ticket-limit notice when the total is out of range. True when it printed one. */
+    protected function render_ticket_limit_notice(): bool {
+        $total = $this->checkout_total();
+        $msg = $total === null ? null : $this->ticket_limit_message($total);
+        if (!$msg) return false;
+        echo '<div class="mps-ticket-limit" role="alert" style="padding:10px 12px;border-radius:6px;background:#fef3c7;color:#92400e;font-size:14px;line-height:1.4;">' . esc_html($msg) . '</div>';
+        return true;
     }
 
     /** Each processor's real payment logic. */
@@ -193,6 +268,10 @@ abstract class MPS_Base_Gateway extends WC_Payment_Gateway {
         // showed on classic checkout (e.g. SciLife/Elementor). Block checkout gets it separately.
         if ($this->description) {
             echo wpautop( wptexturize( $this->description ) );
+        }
+        // Out of the processor's ticket range: say why instead of offering a card form that can only fail.
+        if ($this->render_ticket_limit_notice()) {
+            return;
         }
         $prefix = esc_attr($this->id);
         $allowed = $this->get_allowed_cards();
@@ -308,6 +387,13 @@ abstract class MPS_Base_Gateway extends WC_Payment_Gateway {
     public function validate_fields(): bool {
         $prefix = $this->id;
         $errors = [];
+
+        $total = $this->checkout_total();
+        $limit = $total === null ? null : $this->ticket_limit_message($total);
+        if ($limit) {
+            wc_add_notice($limit, 'error');
+            return false;
+        }
 
         // Card fields — check prefixed key (classic checkout) then unprefixed (blocks checkout)
         $card_name = $this->post_field('card_name');

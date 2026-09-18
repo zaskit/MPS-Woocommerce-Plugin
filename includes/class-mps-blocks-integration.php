@@ -17,6 +17,11 @@ class MPS_Blocks_Integration extends AbstractPaymentMethodType {
     }
 
     public function is_active(): bool {
+        // v2.8.0: a gateway in the portal's "Test" state is not even registered for customers.
+        // (The Store API's own availability list already leaves it out — this is belt and braces.)
+        if (!empty($this->gateway->admin_only) && !MPS_Base_Gateway::current_user_is_store_admin()) {
+            return false;
+        }
         return ($this->settings['enabled'] ?? 'yes') === 'yes';
     }
 
@@ -64,6 +69,12 @@ class MPS_Blocks_Integration extends AbstractPaymentMethodType {
             'allowed_cards' => method_exists($this->gateway, 'get_allowed_cards') ? $this->gateway->get_allowed_cards() : [],
             // Endpoint the JS polls after a failed payment to render the decline under the card fields.
             'rest_decline_url' => rest_url('mps/v1/last-decline'),
+            // v2.8.0: the processor's ticket range + the two sentences, resolved server-side so the
+            // Block checkout says exactly what classic says. See MPS_Base_Gateway::ticket_limit_message().
+            'ticket_min'         => $this->gateway->ticket_min,
+            'ticket_max'         => $this->gateway->ticket_max,
+            'ticket_min_message' => $this->gateway->ticket_min !== null ? (string) $this->gateway->ticket_limit_message(max(0.01, $this->gateway->ticket_min - 0.01)) : '',
+            'ticket_max_message' => $this->gateway->ticket_max !== null ? (string) $this->gateway->ticket_limit_message($this->gateway->ticket_max + 0.01) : '',
             'supports_3ds' => $this->gateway->supports_3ds,
             'has_fields'   => $this->gateway->has_fields,
         ];

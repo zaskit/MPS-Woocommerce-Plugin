@@ -28,6 +28,82 @@ class MPS_EProcessor_API {
     }
 
     /**
+     * Refund an E payment — shared by the 2D, 3D and Hosted gateways.
+     *
+     * v2.8.0: the amount is SENT. Before, no amount went to the processor, so a partial refund typed in
+     * WooCommerce refunded the FULL payment at the processor while Woo recorded only the partial (and
+     * the order note printed the requested amount, so it looked right). The processor allows ONE refund
+     * per payment, partial allowed (`transac_amount`) — so a second refund on the same order is refused
+     * here, before anything is sent.
+     *
+     * A full refund sends exactly what it always did (no amount). `transac_amount` is added only when
+     * the refund is partial. The request signature is unchanged — the guide signs passphrase +
+     * account_id + trans_id only.
+     */
+    public static function refund(array $credentials, WC_Order $order, $amount, string $label): bool|\WP_Error {
+        $tx_id = (string) $order->get_meta('_mps_ep_transaction_id');
+        if ($tx_id === '') {
+            return new \WP_Error('no_tx', 'No transaction ID found.');
+        }
+
+        if ($order->get_meta('_mps_ep_refund_done') === 'yes') {
+            return new \WP_Error('refund_once', 'This processor allows one refund per payment, and this payment already has one. Refund anything more to the customer another way.');
+        }
+
+        $amount = round((float) $amount, 2);
+        $total  = round((float) $order->get_total(), 2);
+        if ($amount <= 0) {
+            return new \WP_Error('refund_amount', 'Enter a refund amount.');
+        }
+        if ($amount > $total) {
+            return new \WP_Error('refund_amount', 'The refund is more than the payment.');
+        }
+        $partial = $amount < $total;
+
+        $account_id = $credentials['account_id'] ?? '';
+        $password   = $credentials['account_password'] ?? '';
+        $passphrase = $credentials['account_passphrase'] ?? '';
+
+        $data = [
+            'account_id'       => $account_id,
+            'account_password' => $password,
+            'account_sha'      => self::sha_refund($passphrase, $account_id, $tx_id),
+            'trans_id'         => $tx_id,
+            'option'           => '',
+        ];
+        if ($partial) {
+            $data['transac_amount'] = number_format($amount, 2, '.', '');
+        }
+
+        $response = self::post(self::REFUND_URL, $data);
+        if (is_wp_error($response)) {
+            return new \WP_Error('api_error', $response->get_error_message());
+        }
+
+        $result = self::parse_response($response);
+        $status = (string) ($result['resp_trans_status'] ?? '');
+        $desc   = (string) ($result['resp_trans_description_status'] ?? '');
+        MPS_Logger::info(sprintf('%s refund order %d tx %s amount %s%s → %s %s', $label, $order->get_id(), $tx_id,
+            number_format($amount, 2, '.', ''), $partial ? ' (partial)' : '', $status ?: 'no status', $desc), 'mps-ep-refund');
+
+        // The status API lists a refund as its own R0000 transaction, so the refund call may answer with
+        // R0000 rather than 00000 — both mean done. PEND = accepted, still being processed: the money is
+        // on its way back, so reporting a failure (and letting someone refund again) would be worse.
+        if (in_array($status, ['00000', 'R0000', 'PEND'], true)) {
+            $order->update_meta_data('_mps_ep_refund_done', 'yes');
+            $order->update_meta_data('_mps_ep_refund_tx_id', (string) ($result['resp_trans_id'] ?? ''));
+            $order->save();
+            $order->add_order_note(sprintf('%s refund %s: %s %s (%s). Refund TX: %s',
+                $label, $status === 'PEND' ? 'accepted, pending at the processor' : 'approved',
+                number_format($amount, 2), $order->get_currency(), $partial ? 'partial' : 'full',
+                $result['resp_trans_id'] ?? '—'));
+            return true;
+        }
+
+        return new \WP_Error('refund_failed', trim(($status ? "[{$status}] " : '') . ($desc ?: 'Refund failed')));
+    }
+
+    /**
      * Verify response SHA256.
      */
     public static function verify_response_sha(string $passphrase, array $response): bool {

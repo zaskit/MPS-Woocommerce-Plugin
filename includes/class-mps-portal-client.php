@@ -108,6 +108,46 @@ class MPS_Portal_Client {
     }
 
     /**
+     * D-Processor: charge a Collect.js token through the portal (the portal holds the private key).
+     * Long timeout on purpose: the portal waits on the gateway, and a retry is safe either way —
+     * the portal never charges an order it already approved.
+     */
+    public static function d_charge(array $data): array {
+        return self::post_json('/api/v1/d/charge', $data, 60, 'mps-d');
+    }
+
+    /** D-Processor: refund (or void, before settlement) through the portal. */
+    public static function d_refund(array $data): array {
+        return self::post_json('/api/v1/d/refund', $data, 45, 'mps-d');
+    }
+
+    private static function post_json(string $path, array $data, int $timeout, string $log_source): array {
+        $settings = self::get_settings();
+        if (empty($settings['api_key']) || empty($settings['api_secret'])) {
+            return ['success' => false, 'status' => 'error', 'error' => 'MPS API credentials are not configured.'];
+        }
+        $response = wp_remote_post(self::portal_url() . $path, [
+            'headers'  => self::headers(),
+            'body'     => wp_json_encode($data),
+            'timeout'  => $timeout,
+            'blocking' => true,
+        ]);
+        if (is_wp_error($response)) {
+            MPS_Logger::error("{$path} failed: " . $response->get_error_message(), $log_source);
+            return ['success' => false, 'status' => 'error', 'error' => $response->get_error_message()];
+        }
+        $body = json_decode(wp_remote_retrieve_body($response), true);
+        if (!is_array($body)) {
+            return ['success' => false, 'status' => 'error', 'error' => 'Invalid portal response (HTTP ' . wp_remote_retrieve_response_code($response) . ').'];
+        }
+        if (isset($body['errors']) && !isset($body['status'])) {
+            $body['status'] = 'error';
+            $body['message'] = $body['message'] ?? implode(' ', array_merge(...array_values($body['errors'])));
+        }
+        return $body;
+    }
+
+    /**
      * Fetch a single transaction's authoritative status from the portal.
      * Used by the A-Processor return handler to confirm the outcome.
      */

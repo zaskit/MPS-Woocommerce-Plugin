@@ -2,7 +2,7 @@
 /**
  * Plugin Name: MPS Gateway
  * Description: Connect your WooCommerce store to MPS Gateway for multi-processor payment processing. Transactions go directly to processors; the portal manages configuration.
- * Version: 2.8.0
+ * Version: 2.9.0
  * Author: ZASK
  * Author URI: https://zask.it
  * Requires at least: 6.0
@@ -32,7 +32,7 @@ if (defined('MPS_PLUGIN_FILE')) {
 
 define('MPS_PLUGIN_FILE', __FILE__);
 define('MPS_PLUGIN_DIR', plugin_dir_path(__FILE__));
-define('MPS_PLUGIN_VERSION', '2.8.0');
+define('MPS_PLUGIN_VERSION', '2.9.0');
 
 // HPOS compatibility
 add_action('before_woocommerce_init', function() {
@@ -76,6 +76,7 @@ add_action('plugins_loaded', function() {
     require_once MPS_PLUGIN_DIR . 'includes/class-mps-decline-codes.php';
     require_once MPS_PLUGIN_DIR . 'includes/class-mps-bin-blocker.php';
     require_once MPS_PLUGIN_DIR . 'includes/class-mps-aprocessor.php';
+    require_once MPS_PLUGIN_DIR . 'includes/class-mps-dprocessor.php';
     require_once MPS_PLUGIN_DIR . 'includes/class-mps-gateway-factory.php';
 
     // ─── Transaction Monitor ───
@@ -263,6 +264,7 @@ add_action('plugins_loaded', function() {
                     elseif ($code === 'e') $badge_color = '#8b5cf6';
                     elseif ($code === 'k') $badge_color = '#10b981';
                     elseif ($code === 'a') $badge_color = '#f59e0b';
+                    elseif ($code === 'd') $badge_color = '#0ea5e9';
                     else $badge_color = '#6b7280';
 
                     $env_badge = $env === 'LIVE'
@@ -448,6 +450,19 @@ add_action('plugins_loaded', function() {
         wp_localize_script('mps-checkout-guard', 'mps_guard_i18n', [
             'processing' => __('Processing…', 'mps-gateway'),
         ]);
+    });
+
+    // D-Processor (v2.9.0): NMI Collect.js card fields. Classic checkout and the pay-for-order page;
+    // the Block checkout loads the same file as a dependency of mps-d-blocks.js. Only the PUBLIC
+    // tokenization key reaches the page.
+    add_action('wp_enqueue_scripts', function() {
+        if (!is_checkout() && !has_block('woocommerce/checkout')) return;
+        $d = array_values(array_filter(MPS_Gateway_Factory::build(), fn($g) => $g instanceof MPS_DProcessor && $g->is_available()));
+        if (!$d) return;
+        $config = [];
+        foreach ($d as $g) $config[$g->id] = $g->frontend_config();
+        wp_enqueue_script('mps-dprocessor', plugin_dir_url(__FILE__) . 'assets/js/mps-dprocessor.js', ['jquery'], MPS_PLUGIN_VERSION, true);
+        wp_localize_script('mps-dprocessor', 'mps_d_classic', ['gateways' => $config]);
     });
 
     // Polling JS on thank-you page

@@ -17,6 +17,7 @@ class MPS_Gateway_Factory {
         'k_2d' => 'MPS_KProcessor',
         'k_3d' => 'MPS_KProcessor',
         'a_card' => 'MPS_AProcessor',
+        'd_nmi' => 'MPS_DProcessor',
     ];
 
     /**

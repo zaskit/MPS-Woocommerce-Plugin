@@ -38,7 +38,7 @@ class MPS_Transaction_Reporter {
      *
      * Carries the last four only. A full card number must never leave the store.
      */
-    private static function charge_acknowledgment(WC_Order $order, array $data): ?array {
+    public static function charge_acknowledgment(WC_Order $order, array $data): ?array {
         if ($order->get_meta('_mps_charge_ack_accepted') !== 'yes') return null;
 
         // Only meaningful on a charge that actually went through — there is nothing to acknowledge

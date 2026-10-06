@@ -108,7 +108,7 @@ class MPS_Portal_Client {
     }
 
     /**
-     * D-Processor: charge a Collect.js token through the portal (the portal holds the private key).
+     * D-Processor: charge a Payment Component token through the portal (the portal holds the private key).
      * Long timeout on purpose: the portal waits on the gateway, and a retry is safe either way —
      * the portal never charges an order it already approved.
      */
@@ -119,6 +119,16 @@ class MPS_Portal_Client {
     /** D-Processor: refund (or void, before settlement) through the portal. */
     public static function d_refund(array $data): array {
         return self::post_json('/api/v1/d/refund', $data, 45, 'mps-d');
+    }
+
+    /** D-Processor: capture an authorize-only order through the portal. */
+    public static function d_capture(array $data): array {
+        return self::post_json('/api/v1/d/capture', $data, 45, 'mps-d');
+    }
+
+    /** D-Processor: void an authorization (or an unsettled sale) through the portal. */
+    public static function d_void(array $data): array {
+        return self::post_json('/api/v1/d/void', $data, 45, 'mps-d');
     }
 
     private static function post_json(string $path, array $data, int $timeout, string $log_source): array {

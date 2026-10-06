@@ -26,11 +26,11 @@ class MPS_Blocks_Integration extends AbstractPaymentMethodType {
     }
 
     public function get_payment_method_script_handles(): array {
-        // D-Processor: NMI Collect.js iframes instead of our own card inputs (v2.9.0). Its own
+        // D-Processor: NMI Payment Component iframes instead of our own card inputs (v2.9.0). Its own
         // script and its own data prefix, so mps-blocks.js never draws plain card inputs for it.
         if ($this->gateway instanceof MPS_DProcessor) {
             $handle = 'mps-d-blocks-' . $this->name;
-            wp_register_script('mps-dprocessor', plugin_dir_url(MPS_PLUGIN_FILE) . 'assets/js/mps-dprocessor.js', [], MPS_PLUGIN_VERSION, true);
+            MPS_DProcessor::register_scripts();
             wp_register_script($handle, plugin_dir_url(MPS_PLUGIN_FILE) . 'assets/js/mps-d-blocks.js',
                 ['wc-blocks-registry', 'wc-settings', 'wp-element', 'wp-html-entities', 'mps-dprocessor'], MPS_PLUGIN_VERSION, true);
             wp_localize_script($handle, 'mps_dblocks_data_' . $this->name, $this->get_payment_method_data() + $this->gateway->frontend_config());

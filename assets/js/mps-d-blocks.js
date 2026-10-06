@@ -2,7 +2,8 @@
  * MPS Gateway — D-Processor on the Block checkout (v2.9.0).
  *
  * Kept apart from mps-blocks.js on purpose: that file renders our own card inputs, this one renders
- * three empty slots that NMI Collect.js fills with its own iframes (window.MPSD, mps-dprocessor.js).
+ * one empty slot that NMI's Payment Component fills with its own iframes (window.MPSD,
+ * mps-dprocessor.js; NMI's bundle in assets/vendor/nmi-pay).
  * Its data globals use a different prefix (mps_dblocks_data_) so mps-blocks.js never picks a D
  * gateway up and draws plain card inputs for it.
  */
@@ -52,8 +53,17 @@
 
             useEffect(function () {
                 if (limit) return;
+                cfg.onCardChange = function (done) { if (done) setErr(''); };
                 window.MPSD.mount(cfg).catch(function (e) { setErr(e.message); });
             }, [limit]);
+
+            // The token went with the failed checkout (decline / error): it is spent, so clear the
+            // card fields and start a new token session.
+            var onFail = reg.onCheckoutFail || reg.onCheckoutAfterProcessingWithError;
+            useEffect(function () {
+                if (!onFail) return;
+                return onFail(function () { window.MPSD.reset(cfg.id); return true; });
+            }, [onFail]);
 
             useEffect(function () {
                 if (!onPaymentSetup) return;
@@ -80,15 +90,10 @@
                 return el('div', null, desc, el('div', { className: 'mps-ticket-limit', role: 'alert',
                     style: { padding: '10px 12px', borderRadius: '6px', background: '#fef3c7', color: '#92400e', fontSize: '14px' } }, limit));
             }
-            var slot = function (name, label) {
-                return el('div', { className: 'mps-field' },
-                    el('label', { htmlFor: cfg.id + '-' + name }, label),
-                    el('div', { className: 'mps-d-slot', id: cfg.id + '-' + name }));
-            };
             return el('div', { className: 'mps-card-form mps-d-form', id: cfg.id + '-form' },
                 desc,
-                slot('ccnumber', 'Card Number'),
-                el('div', { className: 'mps-row' }, slot('ccexp', 'Expiry'), slot('cvv', 'CVC')),
+                // NMI's component draws its own labelled card number / expiry / CVC fields in here.
+                el('div', { className: 'mps-d-component', id: cfg.id + '-card' }),
                 err ? el('div', { className: 'mps-d-error mps-bin-blocked', role: 'alert' }, err) : null,
                 cfg.disclosure ? el('div', { dangerouslySetInnerHTML: { __html: cfg.disclosure } }) : null,
                 cfg.ack_text ? el('label', { className: 'mps-ack-label' },

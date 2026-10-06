@@ -238,17 +238,6 @@
     border-color: #b91c1c;
 }
 
-/* D-Processor (v2.9.0): NMI Collect.js iframes sit inside these slots, styled like our inputs. */
-.mps-d-form .mps-d-slot {
-    display: block;
-    width: 100%;
-    min-height: 44px;
-    border: 1px solid #d1d5db;
-    border-radius: 6px;
-    background: #fff;
-    overflow: hidden;
-    box-sizing: border-box;
-}
-.mps-d-form .mps-d-slot iframe { width: 100% !important; height: 42px !important; border: 0; display: block; }
-.mps-d-form .mps-d-slot:focus-within { border-color: #6366f1; box-shadow: 0 0 0 2px rgba(99, 102, 241, .15); }
+/* D-Processor (v2.9.0): NMI's Payment Component draws its own labelled fields (iframes, shadow DOM) in here. */
+.mps-d-form .mps-d-component { display: block; width: 100%; min-height: 60px; margin-bottom: 8px; box-sizing: border-box; }
 .mps-d-form .mps-d-error { margin-top: 8px; }

@@ -452,16 +452,17 @@ add_action('plugins_loaded', function() {
         ]);
     });
 
-    // D-Processor (v2.9.0): NMI Collect.js card fields. Classic checkout and the pay-for-order page;
-    // the Block checkout loads the same file as a dependency of mps-d-blocks.js. Only the PUBLIC
-    // tokenization key reaches the page.
+    // D-Processor (v2.9.0): NMI Payment Component card fields (bundled, assets/vendor/nmi-pay).
+    // Classic checkout and the pay-for-order page; the Block checkout loads the same files as
+    // dependencies of mps-d-blocks.js. Only the PUBLIC tokenization key reaches the page.
     add_action('wp_enqueue_scripts', function() {
         if (!is_checkout() && !has_block('woocommerce/checkout')) return;
         $d = array_values(array_filter(MPS_Gateway_Factory::build(), fn($g) => $g instanceof MPS_DProcessor && $g->is_available()));
         if (!$d) return;
         $config = [];
         foreach ($d as $g) $config[$g->id] = $g->frontend_config();
-        wp_enqueue_script('mps-dprocessor', plugin_dir_url(__FILE__) . 'assets/js/mps-dprocessor.js', ['jquery'], MPS_PLUGIN_VERSION, true);
+        MPS_DProcessor::register_scripts();
+        wp_enqueue_script('mps-dprocessor');
         wp_localize_script('mps-dprocessor', 'mps_d_classic', ['gateways' => $config]);
     });
 
@@ -775,6 +776,9 @@ add_action('plugins_loaded', function() {
 
         $order = wc_get_order($order_id);
         if (!$order || strpos($order->get_payment_method(), 'mps_') !== 0) return;
+        // D authorize-only: WooCommerce fires status_processing BEFORE status_changed (where the capture
+        // runs). Never name the descriptor before the money is taken — the capture sends it on success.
+        if ($order->get_meta('_mps_d_authorized') === 'yes') return;
 
         $mailer = WC()->mailer();
         $emails = $mailer ? $mailer->get_emails() : [];
@@ -966,12 +970,19 @@ add_action('plugins_loaded', function() {
     add_action('woocommerce_order_status_cancelled', 'mps_sync_order_status_to_portal', 10, 1);
     add_action('woocommerce_order_status_refunded', 'mps_sync_order_status_to_portal', 10, 1);
 
+    // D-Processor authorize-only orders: capture on processing/completed, void on cancel.
+    add_action('woocommerce_order_status_changed', ['MPS_DProcessor', 'on_status_change'], 5, 4);
+
     function mps_sync_order_status_to_portal($order_id) {
         $order = wc_get_order($order_id);
         if (!$order) return;
 
         // Only for MPS gateway orders
         if (strpos($order->get_payment_method(), 'mps_') !== 0) return;
+
+        // D-Processor keeps its own status through /d/charge, /d/capture, /d/void and /d/refund — a
+        // generic "cancelled" report would overwrite a void, or mark a paid order cancelled with no refund.
+        if (strpos($order->get_payment_method(), 'mps_d_') === 0) return;
 
         $wc_status = $order->get_status();
         $portal_status = ($wc_status === 'refunded') ? 'refunded' : 'cancelled';

@@ -1,121 +1,119 @@
 /**
- * MPS Gateway — D-Processor card fields (v2.9.0).
+ * MPS Gateway — D-Processor card form (v2.9.0; NMI Payment Component since 2026-09-30).
  *
- * The card number, expiry and CVV are NMI Collect.js iframes: what the customer types goes straight
- * to NMI and never touches this store. Collect.js returns a one-time payment_token, which the plugin
- * sends to the MPS portal; the portal holds the merchant's private key and runs the charge.
+ * The card number, expiry and CVV are NMI iframes drawn by NMI's Payment Component
+ * (assets/vendor/nmi-pay, window.mountNmiPayments): what the customer types goes straight to NMI and
+ * never touches this store. The component hands back a one-time payment_token plus a masked lookup of
+ * the card (BIN, last four, brand); the plugin sends the token to the MPS portal, which holds the
+ * merchant's private key and runs the charge.
  *
  * `window.MPSD` is shared by the classic checkout (below) and the Block checkout (mps-d-blocks.js).
- * One Collect.js per page: it is a single global, so every D gateway on the page reuses it and
- * re-points its fields at the gateway being paid with.
+ * One component per D gateway, mounted into `#<gateway id>-card`. No onPay is passed, so the
+ * component draws NO pay button of its own — the store's Place Order button submits.
+ *
+ * A token is single-use. After a charge attempt that did not approve, the component is reset
+ * (fields cleared, new token session) and the customer re-enters the card.
  */
 (function () {
     'use strict';
 
     if (window.MPSD) return;
 
-    var loadPromise = null;
-    var pending = null;        // { resolve, reject } of the tokenize() in flight
-    var mountedFor = null;     // gateway id whose slots Collect.js currently fills
-    var valid = {};            // field -> bool, from validationCallback
+    var LOAD_MS = 15000;
+    var LOAD_ERROR = 'The card form could not be loaded. Please refresh the page or choose another payment method.';
+    var INCOMPLETE = 'Please enter your full card number, expiry date and CVC.';
+    var widgets = {};   // gateway id -> { host, w, el, ready: Promise, state: { complete, token, card } }
 
-    var FIELD_CSS = {
-        'border': 'none',
-        'outline': 'none',
-        'box-shadow': 'none',
-        'background': 'transparent',
-        'font-size': '15px',
-        'line-height': '20px',
-        'padding': '10px 12px',
-        'height': '42px',
-        'width': '100%',
-        'color': '#1f2937'
-    };
+    function emptyState() { return { complete: false, token: '', card: null }; }
 
-    function loadCollect(cfg) {
-        if (window.CollectJS) return Promise.resolve();
-        if (loadPromise) return loadPromise;
-        loadPromise = new Promise(function (resolve, reject) {
-            var s = document.createElement('script');
-            s.src = cfg.collect_js_url || 'https://secure.nmi.com/token/Collect.js';
-            s.setAttribute('data-tokenization-key', cfg.tokenization_key);
-            s.async = true;
-            s.onload = function () {
-                // Collect.js defines its global synchronously; give it one tick to finish booting.
-                var tries = 0;
-                (function wait() {
-                    if (window.CollectJS) return resolve();
-                    if (++tries > 50) return reject(new Error('Card form did not load.'));
-                    setTimeout(wait, 100);
-                })();
-            };
-            s.onerror = function () { loadPromise = null; reject(new Error('Card form could not be loaded. Please check your connection and reload the page.')); };
-            document.head.appendChild(s);
-        });
-        return loadPromise;
-    }
-
-    function finish(fn, arg) {
-        var p = pending;
-        pending = null;
-        if (p) p[fn](arg);
-    }
-
-    /** Point Collect.js at this gateway's three slots. Safe to call again after a re-render. */
-    function mount(cfg) {
-        return loadCollect(cfg).then(function () {
-            var id = cfg.id;
-            var num = document.getElementById(id + '-ccnumber');
-            if (!num) return false;
-            // Already filled (iframe present) — nothing to do.
-            if (mountedFor === id && num.querySelector('iframe')) return true;
-            valid = {};
-            window.CollectJS.configure({
-                variant: 'inline',
-                styleSniffer: false,
-                paymentType: 'cc',
-                customCss: FIELD_CSS,
-                invalidCss: { 'color': '#b91c1c' },
-                validCss: { 'color': '#1f2937' },
-                placeholderCss: { 'color': '#9ca3af' },
-                focusCss: { 'color': '#111827' },
-                fields: {
-                    ccnumber: { selector: '#' + id + '-ccnumber', title: 'Card Number', placeholder: '0000 0000 0000 0000' },
-                    ccexp:    { selector: '#' + id + '-ccexp',    title: 'Expiry',      placeholder: 'MM / YY' },
-                    cvv:      { selector: '#' + id + '-cvv',      title: 'CVC',         placeholder: '•••', display: 'required' }
-                },
-                validationCallback: function (field, status) { valid[field] = !!status; },
-                timeoutDuration: 15000,
-                timeoutCallback: function () {
-                    finish('reject', new Error('Please check your card number, expiry date and CVC.'));
-                },
-                callback: function (response) {
-                    if (response && response.token) finish('resolve', response);
-                    else finish('reject', new Error('Your card could not be read. Please check the details and try again.'));
-                }
-            });
-            mountedFor = id;
-            return fieldsShown(id);
-        });
+    function destroy(id) {
+        var rec = widgets[id];
+        delete widgets[id];
+        if (rec && rec.w) { try { rec.w.destroy(); } catch (e) { /* already gone */ } }
     }
 
     /**
-     * Collect.js draws nothing when the tokenization key is wrong or NMI is unreachable, and says so
-     * only in the console. Wait for its iframes; if they never come, tell the customer instead of
-     * leaving three empty boxes.
+     * Mount the component into this gateway's slot. Safe to call again: a live widget in the same slot
+     * is reused; a slot WooCommerce re-rendered gets a fresh one. Resolves true when NMI's fields are
+     * ready, false when the slot is not on the page; rejects with the customer-facing load error.
      */
-    function fieldsShown(id) {
+    function mount(cfg) {
+        var id = cfg.id;
+        var host = document.getElementById(id + '-card');
+        if (!host) return Promise.resolve(false);
+        var cur = widgets[id];
+        if (cur && cur.host === host && cur.el && cur.el.isConnected) return cur.ready;
+        if (cur) destroy(id);
+        if (typeof window.mountNmiPayments !== 'function' || !cfg.tokenization_key) {
+            return Promise.reject(new Error(LOAD_ERROR));
+        }
+
+        var rec = { host: host, w: null, el: null, state: emptyState() };
+        widgets[id] = rec;
+        rec.ready = new Promise(function (resolve, reject) {
+            var settled = false;
+            // NMI draws nothing usable when the key is wrong or NMI is unreachable (the component only
+            // shows "Failed to initialize payment"). If the fields never arrive, remove it and tell
+            // the customer in our own words.
+            var timer = setTimeout(function () {
+                if (settled) return;
+                settled = true;
+                if (widgets[id] === rec) destroy(id);
+                reject(new Error(LOAD_ERROR));
+            }, LOAD_MS);
+            try {
+                rec.w = window.mountNmiPayments(host, {
+                    tokenizationKey: cfg.tokenization_key,
+                    layout: 'multiLine',
+                    paymentMethods: ['card'],
+                    showDivider: false,
+                    onFieldsAvailable: function () {
+                        if (settled) return;
+                        settled = true;
+                        clearTimeout(timer);
+                        resolve(true);
+                    },
+                    // Fires on every change. `complete` + `token` only once all three fields are valid
+                    // (and after NMI's lookup, so lookupData.card is there when it succeeded).
+                    onChange: function (ev) {
+                        var done = !!(ev && ev.complete && ev.token);
+                        rec.state.complete = done;
+                        rec.state.token = done ? String(ev.token) : '';
+                        rec.state.card = done && ev.lookupData && ev.lookupData.card ? ev.lookupData.card : null;
+                        if (typeof cfg.onCardChange === 'function') cfg.onCardChange(done);
+                    }
+                });
+                rec.el = rec.w && rec.w.element;
+                // A refused key shows up fast as the component's own "Failed to initialize payment".
+                (function watch() {
+                    if (settled) return;
+                    var sr = rec.el && rec.el.shadowRoot;
+                    if (sr && /Failed to initialize/i.test(sr.textContent || '')) {
+                        settled = true;
+                        clearTimeout(timer);
+                        if (widgets[id] === rec) destroy(id);
+                        return reject(new Error(LOAD_ERROR));
+                    }
+                    setTimeout(watch, 300);
+                })();
+            } catch (e) {
+                settled = true;
+                clearTimeout(timer);
+                if (widgets[id] === rec) destroy(id);
+                reject(new Error(LOAD_ERROR));
+            }
+        });
+        return rec.ready;
+    }
+
+    /** Wait briefly for `complete`: NMI's lookup runs right after the last keystroke. */
+    function whenComplete(rec, ms) {
         return new Promise(function (resolve, reject) {
             var t0 = Date.now();
             (function check() {
-                var slot = document.getElementById(id + '-ccnumber');
-                if (slot && slot.querySelector('iframe')) return resolve(true);
-                if (!slot) return resolve(false);
-                if (Date.now() - t0 > 10000) {
-                    mountedFor = null;
-                    return reject(new Error('The card form could not be loaded. Please refresh the page or choose another payment method.'));
-                }
-                setTimeout(check, 200);
+                if (rec.state.complete && rec.state.token) return resolve(rec);
+                if (Date.now() - t0 > ms) return reject(new Error(INCOMPLETE));
+                setTimeout(check, 100);
             })();
         });
     }
@@ -123,32 +121,41 @@
     /** Resolve with { token, last_four, brand, bin } or reject with a customer-facing Error. */
     function tokenize(cfg) {
         return mount(cfg).then(function (ok) {
-            if (!ok) throw new Error('Card form is not ready. Please try again.');
-            if (valid.ccnumber === false) throw new Error('Please check your card number.');
-            if (valid.ccexp === false) throw new Error('Please check the expiry date.');
-            if (valid.cvv === false) throw new Error('Please check the CVC.');
-            if (pending) finish('reject', new Error('Superseded.'));
-            return new Promise(function (resolve, reject) {
-                pending = { resolve: resolve, reject: reject };
-                try { window.CollectJS.startPaymentRequest(); }
-                catch (e) { finish('reject', new Error('Your card could not be read. Please try again.')); }
-            });
-        }).then(function (r) {
-            var card = r.card || {};
+            var rec = widgets[cfg.id];
+            if (!ok || !rec) throw new Error('Card form is not ready. Please try again.');
+            return whenComplete(rec, 3000);
+        }).then(function (rec) {
+            var card = rec.state.card || {};
+            // lookupData.card.number is masked ("411111******1111").
             var digits = String(card.number || '').replace(/\D/g, '');
-            var out = { token: r.token, last_four: digits.slice(-4), brand: String(card.type || '').toLowerCase(), bin: String(card.bin || '').replace(/\D/g, '') };
+            var out = {
+                token: rec.state.token,
+                last_four: digits.length >= 4 ? digits.slice(-4) : '',
+                brand: String(card.type || '').toLowerCase(),
+                bin: String(card.bin || '').replace(/\D/g, '')
+            };
             var err = cardRuleError(cfg, out);
             if (err) throw new Error(err);
             return out;
         });
     }
 
+    /** Token used by a charge attempt (or refused): clear the fields and start a new token session. */
+    function reset(id) {
+        var rec = widgets[id];
+        if (!rec) return;
+        rec.state = emptyState();
+        try { if (rec.w) rec.w.resetFields(); } catch (e) { destroy(id); }
+    }
+
+    /** NMI card.type (lookup) → our allowed_cards keys. Same map as MPS_DProcessor::brand_key(). */
     function brandKey(t) {
         t = String(t || '').toLowerCase();
         if (t === 'mc' || t.indexOf('master') > -1) return 'mastercard';
         if (t.indexOf('amex') > -1 || t.indexOf('american') > -1) return 'amex';
         if (t.indexOf('disc') > -1) return 'discover';
         if (t.indexOf('visa') > -1) return 'visa';
+        if (t.indexOf('diner') > -1) return 'diners';
         return t;
     }
 
@@ -169,7 +176,7 @@
         return '';
     }
 
-    window.MPSD = { mount: mount, tokenize: tokenize, brandKey: brandKey };
+    window.MPSD = { mount: mount, tokenize: tokenize, reset: reset, brandKey: brandKey };
 
     // ─── Classic checkout + pay-for-order page ────────────────────────────────────────────────
     var $ = window.jQuery;
@@ -184,8 +191,10 @@
 
     function mountVisible() {
         Object.keys(classic.gateways).forEach(function (id) {
-            if (document.getElementById(id + '-ccnumber') && selected() === id) {
-                mount(cfgFor(id)).catch(function (e) { showError(id, e.message); });
+            if (document.getElementById(id + '-card') && selected() === id) {
+                var cfg = cfgFor(id);
+                cfg.onCardChange = function (done) { if (done) showError(id, ''); };
+                mount(cfg).catch(function (e) { showError(id, e.message); });
             }
         });
     }
@@ -226,7 +235,8 @@
 
     $(function () {
         $('form.checkout').on('checkout_place_order', function () { return beforeSubmit($(this)); });
-        // Pay-for-order page has no checkout_place_order event.
+        // Pay-for-order page has no checkout_place_order event. A failed attempt there reloads the
+        // page, which mounts a fresh component (new token) by itself.
         $('form#order_review').on('submit', function (ev) {
             if (!cfgFor(selected()) || field(selected(), 'payment_token').val()) return true;
             ev.preventDefault();
@@ -234,8 +244,15 @@
             beforeSubmit($(this));
             return false;
         });
-        // A token is single-use: after any failed attempt the next submit must make a new one.
-        $(document.body).on('checkout_error', function () { Object.keys(classic.gateways).forEach(clearToken); });
+        // After any failed attempt the next submit reads the token again. If the server says the
+        // token went to a charge attempt (marker from MPS_DProcessor), it is spent: reset the fields.
+        $(document.body).on('checkout_error', function (ev, html) {
+            var spent = String(html || '').indexOf('mps-d-retype') > -1;
+            Object.keys(classic.gateways).forEach(function (id) {
+                clearToken(id);
+                if (spent) reset(id);
+            });
+        });
         $(document.body).on('updated_checkout payment_method_selected', mountVisible);
         $(document.body).on('change', 'input[name="payment_method"]', mountVisible);
         mountVisible();
